@@ -1,3 +1,7 @@
 spring:
   application:
     name: podo-server
+
+  jackson:
+    deserialization:
+      fail-on-unknown-properties: true
