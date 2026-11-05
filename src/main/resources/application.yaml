@@ -2,6 +2,26 @@ spring:
   application:
     name: podo-server
 
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:${DB_PORT:5432}/${POSTGRES_DB:podo}}
+    username: ${POSTGRES_USER}
+    password: ${POSTGRES_PASSWORD}
+
+  flyway:
+    default-schema: app
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        default_schema: app
+    open-in-view: false
+
+  sql:
+    init:
+      mode: never
+
   jackson:
     deserialization:
       fail-on-unknown-properties: true
