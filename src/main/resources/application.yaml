@@ -1,11 +1,3 @@
-spring:
-  application:
-    name: podo-server
-
-  jackson:
-    deserialization:
-      fail-on-unknown-properties: true
-
 springdoc:
   api-docs:
     path: /v3/api-docs
@@ -13,3 +5,11 @@ springdoc:
     path: /swagger-ui.html
     disable-swagger-default-url: true
     persist-authorization: false
+
+spring:
+  application:
+    name: podo-server
+
+  jackson:
+    deserialization:
+      fail-on-unknown-properties: true
