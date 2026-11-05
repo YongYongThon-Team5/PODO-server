@@ -156,6 +156,18 @@ public class AuthController {
         return ResponseEntity.noContent().headers(headers).build();
     }
 
+    @Operation(summary = "내 계정 조회")
+    @SecurityRequirement(name = "BearerAuth")
+    @GetMapping("/api/me")
+    public ResponseEntity<Me> me(@AuthenticationPrincipal AuthenticatedAccount account,
+            HttpServletRequest request) throws IOException {
+        requireEmptyRequest(request);
+        if (account == null) {
+            throw new BusinessException(ErrorCode.AUTHENTICATION_REQUIRED);
+        }
+        return ResponseEntity.ok().headers(headers()).body(new Me(account.accountId()));
+    }
+
     private AuthenticatedAccount refreshIdentity(HttpServletRequest request, boolean ignoreInvalid) {
         String raw = AuthCookies.read(request, AuthCookies.REFRESH, ErrorCode.INVALID_REQUEST);
         if (raw == null) {
