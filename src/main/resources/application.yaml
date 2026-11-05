@@ -36,3 +36,7 @@ podo:
       client-id: ${KAKAO_CLIENT_ID:}
       client-secret: ${KAKAO_CLIENT_SECRET:}
       redirect-uri: ${KAKAO_REDIRECT_URI:${API_ORIGIN:https://localhost:8443}/api/auth/callback/kakao}
+  profile:
+    options:
+      age-bands: []
+      colors: []
