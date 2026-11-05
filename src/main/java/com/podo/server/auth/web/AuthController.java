@@ -136,6 +136,26 @@ public class AuthController {
                 .body(new TokenResponse(pair.accessToken(), "Bearer", 1800, pair.accountId()));
     }
 
+    @Operation(summary = "현재 로그인 종료", description = "현재 Bearer 세션과 연결 토큰을 폐기한다. Refresh 쿠키는 선택이다.",
+            parameters = @Parameter(name = "X-CSRF-Token", in = ParameterIn.HEADER, required = true))
+    @SecurityRequirement(name = "BearerAuth")
+    @PostMapping("/api/auth/logout")
+    public ResponseEntity<Void> logout(HttpServletRequest request,
+            @AuthenticationPrincipal AuthenticatedAccount access) throws IOException {
+        requireOrigin(request);
+        if (access == null) {
+            throw new BusinessException(ErrorCode.AUTHENTICATION_REQUIRED);
+        }
+        requireSameSession(access, refreshIdentity(request, true));
+        verifyCsrf(request, access.sessionId());
+        requireEmptyRequest(request);
+        sessions.revokeSession(access.sessionId());
+        HttpHeaders headers = headers();
+        AuthCookies.clear(headers, AuthCookies.REFRESH);
+        AuthCookies.clear(headers, AuthCookies.CSRF);
+        return ResponseEntity.noContent().headers(headers).build();
+    }
+
     private AuthenticatedAccount refreshIdentity(HttpServletRequest request, boolean ignoreInvalid) {
         String raw = AuthCookies.read(request, AuthCookies.REFRESH, ErrorCode.INVALID_REQUEST);
         if (raw == null) {

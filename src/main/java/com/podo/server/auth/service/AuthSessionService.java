@@ -111,6 +111,19 @@ public class AuthSessionService {
         return new TokenPair(session.getAccountId(), sessionId, access, refresh, session.getExpiresAt());
     }
 
+    @Transactional
+    public void revokeSession(UUID sessionId) {
+        if (sessionId == null) {
+            throw new BusinessException(ErrorCode.INVALID_TOKEN);
+        }
+        AuthSession session = sessions.findLockedById(sessionId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.INVALID_TOKEN));
+        Instant now = clock.instant();
+        requireActiveSession(session, now, ErrorCode.INVALID_TOKEN);
+        requireActiveAccount(session.getAccountId(), ErrorCode.INVALID_TOKEN);
+        session.revoke(now);
+        tokens.revokeForSession(sessionId, now);
+    }
 
     private static String checkedHash(String raw, ErrorCode error) {
         if (!OpaqueTokens.isToken(raw)) {
