@@ -23,25 +23,8 @@ public class ProfileOptionsService {
 
     @Transactional(readOnly = true)
     public ProfileOptionsResponse getOptions() {
-        var colors = properties.colors();
-        var ageBands = properties.ageBands();
-        if (colors == null || colors.isEmpty() || ageBands == null) {
-            throw unavailable();
-        }
-        Set<String> colorCodes = new HashSet<>();
-        for (var color : colors) {
-            if (color == null || !validCodeAndLabel(color.code(), color.label())
-                    || color.hex() == null || !color.hex().matches("#[0-9A-Fa-f]{6}")
-                    || !colorCodes.add(color.code())) {
-                throw unavailable();
-            }
-        }
-        Set<String> ageCodes = new HashSet<>();
-        for (var age : ageBands) {
-            if (age == null || !validCodeAndLabel(age.code(), age.label()) || !ageCodes.add(age.code())) {
-                throw unavailable();
-            }
-        }
+        var colors = colorOptions();
+        var ageBands = ageOptions();
         var rows = tags.findAllByKindIn(List.of(Tag.Kind.INTEREST, Tag.Kind.BOOK_GENRE));
         for (Tag tag : rows) {
             if (!validCodeAndLabel(tag.getCode(), tag.getLabel())) {
@@ -54,6 +37,36 @@ public class ProfileOptionsService {
                         List.of("image/jpeg", "image/png", "image/webp"), 5_242_880, 16_777_216));
     }
 
+    public List<ProfileOptionsProperties.ColorOption> colorOptions() {
+        var colors = properties.colors();
+        if (colors == null || colors.isEmpty()) {
+            throw unavailable();
+        }
+        Set<String> colorCodes = new HashSet<>();
+        for (var color : colors) {
+            if (color == null || !validCodeAndLabel(color.code(), color.label())
+                    || color.hex() == null || !color.hex().matches("#[0-9A-Fa-f]{6}")
+                    || !colorCodes.add(color.code())) {
+                throw unavailable();
+            }
+        }
+        return colors;
+    }
+
+    public List<ProfileOptionsProperties.Option> ageOptions() {
+        var ageBands = properties.ageBands();
+        if (ageBands == null) {
+            throw unavailable();
+        }
+        Set<String> ageCodes = new HashSet<>();
+        for (var age : ageBands) {
+            if (age == null || !validCodeAndLabel(age.code(), age.label()) || !ageCodes.add(age.code())) {
+                throw unavailable();
+            }
+        }
+        return ageBands;
+    }
+
     private List<ProfileOptionsResponse.TagOption> options(List<Tag> rows, Tag.Kind kind) {
         return rows.stream().filter(tag -> tag.getKind() == kind)
                 .sorted(Comparator.comparing(Tag::getCode))
@@ -62,7 +75,8 @@ public class ProfileOptionsService {
     }
 
     private boolean validCodeAndLabel(String code, String label) {
-        return code != null && !code.isBlank() && code.length() <= 64 && label != null && !label.isBlank();
+        return code != null && !code.isBlank() && code.codePointCount(0, code.length()) <= 64
+                && label != null && !label.isBlank();
     }
 
     private BusinessException unavailable() {
