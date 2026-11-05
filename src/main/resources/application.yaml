@@ -5,3 +5,11 @@ spring:
   jackson:
     deserialization:
       fail-on-unknown-properties: true
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    disable-swagger-default-url: true
+    persist-authorization: false
