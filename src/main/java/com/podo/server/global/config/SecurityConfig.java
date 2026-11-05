@@ -1,31 +1,28 @@
 package com.podo.server.global.config;
 
 import com.podo.server.global.exception.ErrorCode;
-import com.podo.server.global.response.ErrorResponse;
+import com.podo.server.auth.security.BearerAuthenticationFilter;
+import com.podo.server.auth.security.SecurityErrorWriter;
+import com.podo.server.auth.service.AuthSessionService;
 import jakarta.servlet.DispatcherType;
-import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
-import org.springframework.http.MediaType;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.web.SecurityFilterChain;
-import org.springframework.security.web.csrf.CsrfException;
-import tools.jackson.databind.ObjectMapper;
-
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 
 @Configuration
 public class SecurityConfig {
 
-    private final ObjectMapper objectMapper;
+    private final SecurityErrorWriter errors;
+    private final AuthSessionService sessions;
 
-    public SecurityConfig(ObjectMapper objectMapper) {
-        this.objectMapper = objectMapper;
+    public SecurityConfig(SecurityErrorWriter errors, AuthSessionService sessions) {
+        this.errors = errors;
+        this.sessions = sessions;
     }
 
     @Bean
@@ -44,22 +41,22 @@ public class SecurityConfig {
                                 SessionCreationPolicy.STATELESS
                         ))
 
-                // 추천은 공개 조회 요청이므로 기본 CSRF 검사에서 제외한다.
-                .csrf(csrf -> csrf
-                        .ignoringRequestMatchers("/api/recommendations"))
+                // Refresh 쿠키를 사용하는 인증 POST는 AuthController에서 서명·Origin을 검증한다.
+                // 나머지 개인 API는 브라우저가 자동 전송하지 않는 Bearer만으로 인증한다.
+                .csrf(AbstractHttpConfigurer::disable)
+                .addFilterBefore(new BearerAuthenticationFilter(sessions, errors),
+                        UsernamePasswordAuthenticationFilter.class)
 
                 .exceptionHandling(exception -> exception
                         .authenticationEntryPoint((request, response, ex) ->
-                                writeError(
+                                errors.write(
                                         response,
                                         ErrorCode.AUTHENTICATION_REQUIRED
                                 ))
                         .accessDeniedHandler((request, response, ex) ->
-                                writeError(
+                                errors.write(
                                         response,
-                                        ex instanceof CsrfException
-                                                ? ErrorCode.CSRF_INVALID
-                                                : ErrorCode.RESOURCE_NOT_FOUND
+                                        ErrorCode.RESOURCE_NOT_FOUND
                                 )))
 
                 .authorizeHttpRequests(authorize -> authorize
@@ -85,7 +82,8 @@ public class SecurityConfig {
 
                         .requestMatchers(
                                 HttpMethod.POST,
-                                "/api/recommendations"
+                                "/api/recommendations",
+                                "/api/auth/token"
                         )
                         .permitAll()
 
@@ -95,28 +93,6 @@ public class SecurityConfig {
                         .anyRequest()
                         .denyAll());
 
-        // 카카오 로그인·자체 Bearer 토큰 검증·서명된 CSRF는
-        // 인증 기능을 구현할 때 연결한다.
         return http.build();
-    }
-
-    private void writeError(
-            HttpServletResponse response,
-            ErrorCode errorCode
-    ) throws IOException {
-
-        ErrorResponse body = ErrorResponse.of(errorCode);
-
-        response.setStatus(errorCode.getStatus().value());
-        response.setContentType(MediaType.APPLICATION_JSON_VALUE);
-        response.setCharacterEncoding(StandardCharsets.UTF_8.name());
-        response.setHeader(HttpHeaders.CACHE_CONTROL, "no-store");
-        response.setHeader("X-Request-Id", body.error().requestId());
-
-        if (errorCode.getStatus().value() == 401) {
-            response.setHeader(HttpHeaders.WWW_AUTHENTICATE, "Bearer");
-        }
-
-        objectMapper.writeValue(response.getOutputStream(), body);
     }
 }

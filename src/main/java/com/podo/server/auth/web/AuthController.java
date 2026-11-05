@@ -1,6 +1,7 @@
 package com.podo.server.auth.web;
 
 import com.podo.server.auth.config.AuthProperties;
+import com.podo.server.auth.csrf.CsrfService;
 import com.podo.server.auth.kakao.KakaoClient;
 import com.podo.server.auth.service.AuthSessionService;
 import com.podo.server.auth.service.AuthenticatedAccount;
@@ -31,17 +32,34 @@ import org.springframework.web.bind.annotation.RestController;
 @Tag(name = "인증")
 public class AuthController {
     private final AuthProperties properties;
+    private final AuthSessionService sessions;
     private final OAuthLoginStateService states;
     private final KakaoClient kakao;
-    private final AuthSessionService sessions;
+    private final CsrfService csrf;
     private final Clock clock;
 
-    public AuthController(AuthProperties properties, OAuthLoginStateService states, KakaoClient kakao, AuthSessionService sessions, Clock clock) {
+    public AuthController(AuthProperties properties, AuthSessionService sessions, OAuthLoginStateService states,
+            KakaoClient kakao, CsrfService csrf, Clock clock) {
         this.properties = properties;
+        this.sessions = sessions;
         this.states = states;
         this.kakao = kakao;
-        this.sessions = sessions;
+        this.csrf = csrf;
         this.clock = clock;
+    }
+
+    @Operation(summary = "CSRF 토큰 조회", description = "선택 Bearer 또는 Refresh 세션에 결합한다. 둘 다 없으면 익명 토큰을 발급한다.")
+    @GetMapping("/api/auth/csrf")
+    public ResponseEntity<CsrfResponse> csrf(HttpServletRequest request,
+            @AuthenticationPrincipal AuthenticatedAccount access) throws IOException {
+        requireEmptyRequest(request);
+        AuthenticatedAccount refresh = refreshIdentity(request, false);
+        requireSameSession(access, refresh);
+        AuthenticatedAccount context = access != null ? access : refresh;
+        String token = csrf.issue(context == null ? null : context.sessionId());
+        HttpHeaders headers = headers();
+        AuthCookies.set(headers, AuthCookies.CSRF, token, Duration.ofHours(1));
+        return ResponseEntity.ok().headers(headers).body(new CsrfResponse(token));
     }
 
     @Operation(summary = "카카오 로그인 시작", description = "브라우저에서 이동하면 카카오 인가 화면으로 리다이렉트한다.")
@@ -96,6 +114,39 @@ public class AuthController {
         return ResponseEntity.status(302).headers(headers).build();
     }
 
+    private AuthenticatedAccount refreshIdentity(HttpServletRequest request, boolean ignoreInvalid) {
+        String raw = AuthCookies.read(request, AuthCookies.REFRESH, ErrorCode.INVALID_REQUEST);
+        if (raw == null) {
+            return null;
+        }
+        try {
+            return sessions.authenticateRefresh(raw);
+        } catch (BusinessException ex) {
+            if (ignoreInvalid && ex.getErrorCode() == ErrorCode.REFRESH_TOKEN_INVALID) {
+                return null;
+            }
+            throw ex;
+        }
+    }
+
+    private void requireSameSession(AuthenticatedAccount access, AuthenticatedAccount refresh) {
+        if (access != null && refresh != null && !access.sessionId().equals(refresh.sessionId())) {
+            throw new BusinessException(ErrorCode.AUTH_CONTEXT_MISMATCH);
+        }
+    }
+
+    private void requireOrigin(HttpServletRequest request) {
+        String origin = AuthCookies.singleHeader(request, HttpHeaders.ORIGIN, ErrorCode.CSRF_INVALID);
+        if (!properties.requiredOrigin().equals(origin)) {
+            throw new BusinessException(ErrorCode.CSRF_INVALID);
+        }
+    }
+
+    private void verifyCsrf(HttpServletRequest request, UUID sessionId) {
+        csrf.validate(AuthCookies.read(request, AuthCookies.CSRF, ErrorCode.CSRF_INVALID),
+                AuthCookies.singleHeader(request, "X-CSRF-Token", ErrorCode.CSRF_INVALID), sessionId);
+    }
+
     private void requireEmptyBody(HttpServletRequest request) throws IOException {
         if (request.getContentLengthLong() > 0 || request.getInputStream().read() != -1) {
             throw new BusinessException(ErrorCode.INVALID_REQUEST);
@@ -116,4 +167,8 @@ public class AuthController {
         headers.set("X-Request-Id", UUID.randomUUID().toString());
         return headers;
     }
+
+    public record CsrfResponse(String csrfToken) { }
+    public record TokenResponse(String accessToken, String tokenType, int expiresIn, UUID accountId) { }
+    public record Me(UUID accountId) { }
 }

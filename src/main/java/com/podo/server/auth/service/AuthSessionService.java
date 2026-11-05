@@ -51,7 +51,38 @@ public class AuthSessionService {
         return new LoginSession(account.getId(), sessionId, refresh, expiresAt);
     }
 
+    @Transactional(readOnly = true)
+    public AuthenticatedAccount authenticateAccess(String rawAccess) {
+        String hash = checkedHash(rawAccess, ErrorCode.INVALID_TOKEN);
+        AuthToken token = tokens.findById(hash)
+                .orElseThrow(() -> new BusinessException(ErrorCode.INVALID_TOKEN));
+        if (token.getKind() != AuthToken.Kind.ACCESS || token.getRevokedAt() != null || token.getConsumedAt() != null) {
+            throw new BusinessException(ErrorCode.INVALID_TOKEN);
+        }
+        Instant now = clock.instant();
+        AuthSession session = sessions.findById(token.getSessionId())
+                .orElseThrow(() -> new BusinessException(ErrorCode.INVALID_TOKEN));
+        requireActiveSession(session, now, ErrorCode.INVALID_TOKEN);
+        requireActiveAccount(session.getAccountId(), ErrorCode.INVALID_TOKEN);
+        if (!token.getExpiresAt().isAfter(now)) {
+            throw new BusinessException(ErrorCode.TOKEN_EXPIRED);
+        }
+        return new AuthenticatedAccount(session.getAccountId(), session.getId());
+    }
 
+    @Transactional(readOnly = true)
+    public AuthenticatedAccount authenticateRefresh(String rawRefresh) {
+        String hash = checkedHash(rawRefresh, ErrorCode.REFRESH_TOKEN_INVALID);
+        AuthToken token = tokens.findById(hash)
+                .orElseThrow(() -> new BusinessException(ErrorCode.REFRESH_TOKEN_INVALID));
+        Instant now = clock.instant();
+        requireUsableRefresh(token, now);
+        AuthSession session = sessions.findById(token.getSessionId())
+                .orElseThrow(() -> new BusinessException(ErrorCode.REFRESH_TOKEN_INVALID));
+        requireActiveSession(session, now, ErrorCode.REFRESH_TOKEN_INVALID);
+        requireActiveAccount(session.getAccountId(), ErrorCode.REFRESH_TOKEN_INVALID);
+        return new AuthenticatedAccount(session.getAccountId(), session.getId());
+    }
 
 
 
