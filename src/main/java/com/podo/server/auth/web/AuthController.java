@@ -114,6 +114,28 @@ public class AuthController {
         return ResponseEntity.status(302).headers(headers).build();
     }
 
+    @Operation(summary = "Access 토큰 발급·갱신", description = "본문 없이 Refresh 쿠키와 CSRF를 전송한다. Refresh는 매번 회전한다.",
+            parameters = @Parameter(name = "X-CSRF-Token", in = ParameterIn.HEADER, required = true))
+    @SecurityRequirement(name = "RefreshCookie")
+    @PostMapping("/api/auth/token")
+    public ResponseEntity<TokenResponse> token(HttpServletRequest request,
+            @AuthenticationPrincipal AuthenticatedAccount access) throws IOException {
+        requireOrigin(request);
+        AuthenticatedAccount refresh = refreshIdentity(request, false);
+        if (refresh == null) {
+            throw new BusinessException(ErrorCode.REFRESH_TOKEN_INVALID);
+        }
+        requireSameSession(access, refresh);
+        verifyCsrf(request, refresh.sessionId());
+        requireEmptyRequest(request);
+        var pair = sessions.rotateRefresh(AuthCookies.read(request, AuthCookies.REFRESH, ErrorCode.INVALID_REQUEST));
+        HttpHeaders headers = headers();
+        AuthCookies.set(headers, AuthCookies.REFRESH, pair.refreshToken(),
+                Duration.between(clock.instant(), pair.expiresAt()));
+        return ResponseEntity.ok().headers(headers)
+                .body(new TokenResponse(pair.accessToken(), "Bearer", 1800, pair.accountId()));
+    }
+
     private AuthenticatedAccount refreshIdentity(HttpServletRequest request, boolean ignoreInvalid) {
         String raw = AuthCookies.read(request, AuthCookies.REFRESH, ErrorCode.INVALID_REQUEST);
         if (raw == null) {

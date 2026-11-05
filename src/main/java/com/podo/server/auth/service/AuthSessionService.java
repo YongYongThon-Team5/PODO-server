@@ -84,6 +84,32 @@ public class AuthSessionService {
         return new AuthenticatedAccount(session.getAccountId(), session.getId());
     }
 
+    @Transactional
+    public TokenPair rotateRefresh(String rawRefresh) {
+        String hash = checkedHash(rawRefresh, ErrorCode.REFRESH_TOKEN_INVALID);
+        UUID sessionId = tokens.findSessionIdByTokenHash(hash)
+                .orElseThrow(() -> new BusinessException(ErrorCode.REFRESH_TOKEN_INVALID));
+        // Lock the session before loading token state, serializing refresh and logout.
+        AuthSession session = sessions.findLockedById(sessionId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.REFRESH_TOKEN_INVALID));
+        Instant now = clock.instant();
+        requireActiveSession(session, now, ErrorCode.REFRESH_TOKEN_INVALID);
+        requireActiveAccount(session.getAccountId(), ErrorCode.REFRESH_TOKEN_INVALID);
+        AuthToken oldRefresh = tokens.findById(hash)
+                .orElseThrow(() -> new BusinessException(ErrorCode.REFRESH_TOKEN_INVALID));
+        requireUsableRefresh(oldRefresh, now);
+        if (session.getExpiresAt().isBefore(now.plus(ACCESS_LIFETIME))) {
+            throw new BusinessException(ErrorCode.REFRESH_TOKEN_INVALID);
+        }
+
+        oldRefresh.consume(now);
+        String access = OpaqueTokens.newToken();
+        String refresh = OpaqueTokens.newToken();
+        tokens.saveAll(List.of(
+                new AuthToken(OpaqueTokens.hash(access), sessionId, AuthToken.Kind.ACCESS, now.plus(ACCESS_LIFETIME)),
+                new AuthToken(OpaqueTokens.hash(refresh), sessionId, AuthToken.Kind.REFRESH, session.getExpiresAt())));
+        return new TokenPair(session.getAccountId(), sessionId, access, refresh, session.getExpiresAt());
+    }
 
 
     private static String checkedHash(String raw, ErrorCode error) {
