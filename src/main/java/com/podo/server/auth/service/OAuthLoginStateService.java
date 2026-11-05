@@ -34,7 +34,33 @@ public class OAuthLoginStateService {
     }
 
     // A later provider/network failure must not restore this one-time challenge.
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void consume(String state, String browserNonce) {
+        if (!OpaqueTokens.isToken(state) || !OpaqueTokens.isToken(browserNonce)) {
+            throw new BusinessException(ErrorCode.INVALID_REQUEST);
+        }
+        OAuthLoginRequest request = lockedRequest(state);
+        Instant now = clock.instant();
+        boolean matchingNonce = MessageDigest.isEqual(
+                request.getBrowserNonceHash().getBytes(StandardCharsets.US_ASCII),
+                OpaqueTokens.hash(browserNonce).getBytes(StandardCharsets.US_ASCII));
+        if (!matchingNonce || request.getConsumedAt() != null || !request.getExpiresAt().isAfter(now)) {
+            throw new BusinessException(ErrorCode.INVALID_REQUEST);
+        }
+        request.consume(now);
+    }
 
+    @Transactional
+    public void linkAccount(String state, UUID accountId) {
+        if (!OpaqueTokens.isToken(state) || accountId == null) {
+            throw new BusinessException(ErrorCode.INVALID_REQUEST);
+        }
+        OAuthLoginRequest request = lockedRequest(state);
+        if (request.getConsumedAt() == null || request.getAccountId() != null) {
+            throw new BusinessException(ErrorCode.INVALID_REQUEST);
+        }
+        request.linkAccount(accountId);
+    }
 
     private OAuthLoginRequest lockedRequest(String state) {
         return requests.findLockedByStateHash(OpaqueTokens.hash(state))
