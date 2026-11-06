@@ -51,17 +51,18 @@ class PodoServerApplicationTests {
     @Test
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
     void initializesTheDomainSchemaAndDoesNotReapplyTheMigration() {
-        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("1");
+        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("2");
         assertThat(flyway.info().applied())
                 .filteredOn(migration -> migration.getVersion() != null)
-                .hasSize(1);
+                .hasSize(2);
         assertThat(jdbc.queryForList("""
                 SELECT table_name FROM information_schema.tables
                 WHERE table_schema = 'app' AND table_type = 'BASE TABLE'
                   AND table_name <> 'flyway_schema_history'
                 """, String.class)).containsExactlyInAnyOrder(
                 "accounts", "oauth_login_requests", "auth_sessions", "auth_tokens",
-                "child_profiles", "profile_images", "tags", "places", "place_sources",
+                "child_profiles", "profile_images", "profile_image_deletions",
+                "tags", "places", "place_sources",
                 "visits", "quiz_sets", "quiz_questions", "quiz_answers", "quiz_hint_views");
         assertThat(jdbc.queryForObject("""
                 SELECT count(*) FROM information_schema.table_constraints
@@ -77,7 +78,7 @@ class PodoServerApplicationTests {
         assertThat(restartedFlyway.info().pending()).isEmpty();
         assertThat(restartedFlyway.info().applied())
                 .filteredOn(migration -> migration.getVersion() != null)
-                .hasSize(1);
+                .hasSize(2);
         restartedFlyway.validate();
     }
 

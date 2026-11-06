@@ -192,6 +192,7 @@ Resources:
           systemctl enable --now docker amazon-ssm-agent
           useradd --system --home-dir /opt/podo --shell /sbin/nologin podo
           install -d -m 0755 /opt/podo
+          install -d -o podo -g podo -m 0700 /var/lib/podo/profile-images
           install -d -m 0700 /etc/podo
           umask 077
           printf 'POSTGRES_DB=podo\nPOSTGRES_USER=podo\nPOSTGRES_PASSWORD=%s\n' "$(openssl rand -hex 32)" > /etc/podo/postgres.env
@@ -231,6 +232,7 @@ Resources:
           Environment=API_ORIGIN=https://${Address}
           Environment=SERVER_ADDRESS=127.0.0.1
           Environment=SPRING_PROFILES_ACTIVE=dev
+          Environment=PODO_PROFILE_IMAGE_DIRECTORY=/var/lib/podo/profile-images
           EnvironmentFile=/etc/podo/postgres.env
           EnvironmentFile=-/etc/podo/app.env
           ExecStart=/usr/bin/java -Xmx640m -jar /opt/podo/server.jar

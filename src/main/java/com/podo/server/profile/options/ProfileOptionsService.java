@@ -4,6 +4,7 @@ import com.podo.server.classification.domain.Tag;
 import com.podo.server.classification.repository.TagRepository;
 import com.podo.server.global.exception.BusinessException;
 import com.podo.server.global.exception.ErrorCode;
+import com.podo.server.profile.image.processing.ProfileImageProcessor;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
@@ -34,7 +35,8 @@ public class ProfileOptionsService {
         return new ProfileOptionsResponse(options(rows, Tag.Kind.INTEREST), options(rows, Tag.Kind.BOOK_GENRE),
                 ageBands, colors, new ProfileOptionsResponse.ColorPolicy(false),
                 new ProfileOptionsResponse.PhotoUploadPolicy(
-                        List.of("image/jpeg", "image/png", "image/webp"), 5_242_880, 16_777_216));
+                        ProfileImageProcessor.ALLOWED_CONTENT_TYPES, ProfileImageProcessor.MAX_BYTES,
+                        ProfileImageProcessor.MAX_PIXELS));
     }
 
     public List<ProfileOptionsProperties.ColorOption> colorOptions() {

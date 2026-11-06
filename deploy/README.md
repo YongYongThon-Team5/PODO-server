@@ -22,3 +22,4 @@
 - Spring 시작에 실패하면 배포 명령은 직전 JAR을 복구한다. Flyway가 적용한 DB 변경은 별도로 관리한다.
 - PostgreSQL 데이터는 EC2의 암호화된 EBS 볼륨에 저장된다. 인스턴스를 교체하면 새 인스턴스에는 기존 볼륨이 자동 연결되지 않는다. 기존 볼륨과 배포 버킷은 스택 삭제 후에도 보존되며 별도 요금이 발생할 수 있다.
 - 카카오 로그인 설정은 Systems Manager로 접속해 서버의 `/etc/podo/app.env`에 저장하고 `sudo systemctl restart podo`로 적용한다. 실제 카카오 앱의 콜백 주소와 프론트 출처도 함께 설정해야 한다.
+- 프로필 사진은 암호화된 EBS의 `/var/lib/podo/profile-images`에 저장한다. 기존 EC2에 최초 적용하기 전에 SSM으로 `sudo install -d -o podo -g podo -m 0700 /var/lib/podo/profile-images`를 실행하고 `/etc/podo/app.env`에 `PODO_PROFILE_IMAGE_DIRECTORY=/var/lib/podo/profile-images`를 추가한다.

@@ -27,7 +27,7 @@ Java 21과 Docker Compose가 필요하다. 각자 컴퓨터에서 PostgreSQL 컨
    ./gradlew bootRun
    ```
 
-컨테이너 실행은 DB 실행까지만 담당한다. Spring 시작 시 Flyway가 `src/main/resources/db/migration`의 미적용 SQL을 순서대로 적용한다. 첫 실행에는 `app` 스키마의 서비스 테이블 14개와 Flyway 이력 테이블이 생성된다. JPA는 `ddl-auto: validate`로 Entity와 DB 구조를 검사하며 테이블을 자동 변경하지 않는다.
+컨테이너 실행은 DB 실행까지만 담당한다. Spring 시작 시 Flyway가 `src/main/resources/db/migration`의 미적용 SQL을 순서대로 적용한다. 첫 실행에는 `app` 스키마의 서비스 테이블, 사진 삭제 대기열, Flyway 이력 테이블이 생성된다. JPA는 `ddl-auto: validate`로 Entity와 DB 구조를 검사하며 테이블을 자동 변경하지 않는다.
 
 DB 접속 기본값은 `localhost:5432`, DB 이름·사용자는 `podo`다. 포트가 사용 중이면 `.env`의 `DB_PORT`를 바꾼다. 원격 DB가 필요하면 Spring의 `DB_URL`을 지정한다.
 
@@ -60,7 +60,7 @@ Docker를 실행한 상태에서 아래 명령을 사용한다. Testcontainers�
 
 ## 인증 설정과 사용
 
-인증은 카카오 로그인, 서명된 CSRF, 서비스 토큰 발급·갱신, 로그아웃, 내 계정 조회를 제공한다. 아이 프로필·사진 API는 별도 작업이다.
+인증은 카카오 로그인, 서명된 CSRF, 서비스 토큰 발급·갱신, 로그아웃, 내 계정 조회를 제공한다. 아이 프로필과 사진 API는 아래 절을 참고한다.
 
 카카오 로그인을 실제로 사용하려면 `.env`에 아래 값을 설정한다.
 
@@ -116,6 +116,13 @@ B·C의 Controller에서는 `@AuthenticationPrincipal AuthenticatedAccount`의 `
 
 신규 색상·연령·태그 선택은 활성 목록만 허용한다. 이미 선택한 비활성 항목은 유지할 수 있다. 색상 목록이 비어 있는 환경에서는 새로운 색상 선택이 필요한 생성·수정은 503이다. 목록 조회, 별칭 수정, 기존 값 유지·선택 해제는 운영 목록이 없어도 가능하다.
 
-색상 중복은 같은 계정 안에서만 409로 차단한다. 쓰기는 계정 행을 먼저 잠그고, 같은 색상의 동시 생성도 한 건만 성공하게 한다. 사진은 본인 소유의 업로드 메타데이터만 연결하며 여러 프로필이 공유할 수 있다. 마지막 연결이 끊길 때만 `orphaned_at`을 기록한다. 실제 사진 업로드·조회·파일 정리는 다음 사진 기능 작업에서 구현한다.
+색상 중복은 같은 계정 안에서만 409로 차단한다. 쓰기는 계정 행을 먼저 잠그고, 같은 색상의 동시 생성도 한 건만 성공하게 한다. 사진은 본인 소유의 `imageId`로 연결하며 여러 프로필이 공유할 수 있다. 마지막 연결이 끊기면 `orphaned_at`을 기록한다.
 
 목록은 `createdAt ASC, id ASC`로 정렬하고 기본 20개, 최대 100개다. `nextCursor`는 다음 요청의 `cursor`로 그대로 전달하며 다른 계정에서 사용할 수 없다. 마지막 페이지는 `nextCursor: null`이다. 이 커서는 조회 경계이며 소유권 판단에는 항상 인증 계정을 사용한다. 프로필 시각은 PostgreSQL과 동일한 마이크로초 정밀도로 저장한다.
+
+## 프로필 사진
+
+- `POST /api/profile-images`에 Bearer와 multipart `file`을 보내면 `201` 및 `imageId`, `contentType`, `sizeBytes`를 받는다. 프로필 생성·수정의 `profileImageId`에 이 ID를 전달한다.
+- 사진은 JPEG, PNG, WebP를 받는다. 이미지의 가로와 세로는 각각 최대 16,384픽셀까지 허용한다. 방향을 보정하고 메타데이터를 제거해 저장한다. WebP는 JPEG 또는 PNG로 변환하며 응답의 `contentType`은 저장된 형식이다.
+- `GET /api/profile-images/{imageId}`는 사진을 업로드한 계정에 이미지 바이트를 반환한다. 프론트는 Bearer를 포함해 요청하고 받은 이미지로 표시한다.
+- 사진 파일은 `PODO_PROFILE_IMAGE_DIRECTORY`(로컬 기본값 `./var/profile-images`)에 저장한다. 최초 업로드 또는 마지막 연결 해제부터 24시간이 지난 사진은 시간 단위로 정리하고, 파일 삭제에 실패하면 재시도한다.
