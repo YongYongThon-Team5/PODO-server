@@ -1,0 +1,136 @@
+name: AWS dev deployment
+
+on:
+  pull_request:
+    branches: [dev]
+  push:
+    branches: [dev]
+  workflow_dispatch:
+
+jobs:
+  build:
+    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/dev'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+      - name: Test and build
+        run: ./gradlew --no-daemon test bootJar
+      - name: Select the executable JAR
+        if: github.ref == 'refs/heads/dev' && github.event_name != 'pull_request'
+        shell: bash
+        run: |
+          shopt -s nullglob
+          jars=()
+          for jar in build/libs/*.jar; do
+            [[ "$jar" == *-plain.jar ]] || jars+=("$jar")
+          done
+          if [[ "${#jars[@]}" -ne 1 ]]; then
+            echo "Expected exactly one executable JAR in build/libs." >&2
+            exit 1
+          fi
+          cp "${jars[0]}" "$RUNNER_TEMP/podo.jar"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: github.ref == 'refs/heads/dev' && github.event_name != 'pull_request'
+        with:
+          name: podo-boot-jar
+          path: ${{ runner.temp }}/podo.jar
+          if-no-files-found: error
+          overwrite: true
+
+  deploy:
+    if: github.ref == 'refs/heads/dev' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    concurrency:
+      group: podo-aws-dev-deploy
+      queue: max
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: podo-boot-jar
+          path: ${{ runner.temp }}
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.PODO_AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ap-northeast-2
+      - name: Upload and deploy release
+        id: release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_BUCKET: ${{ vars.PODO_AWS_ARTIFACT_BUCKET }}
+          INSTANCE_ID: ${{ vars.PODO_AWS_INSTANCE_ID }}
+          DEPLOY_DOCUMENT: ${{ vars.PODO_AWS_DEPLOY_DOCUMENT }}
+          AWS_PAGER: ''
+        run: |
+          dev_sha=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/dev" --jq '.object.sha')
+          if [[ "$GITHUB_SHA" != "$dev_sha" ]]; then
+            echo "Skipping deployment because dev now points to a different commit."
+            exit 0
+          fi
+
+          release_id="$GITHUB_SHA-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          aws s3api put-object --bucket "$ARTIFACT_BUCKET" --key "releases/$release_id.jar" \
+            --body "$RUNNER_TEMP/podo.jar" --checksum-algorithm SHA256 >/dev/null
+          command_id=$(aws ssm send-command \
+            --instance-ids "$INSTANCE_ID" --document-name "$DEPLOY_DOCUMENT" \
+            --parameters "ReleaseId=$release_id" --timeout-seconds 60 \
+            --query 'Command.CommandId' --output text)
+          echo "SSM command ID $command_id"
+
+          deadline=$((SECONDS + 480))
+          status=Pending
+          while (( SECONDS < deadline )); do
+            if status=$(aws ssm get-command-invocation \
+              --command-id "$command_id" --instance-id "$INSTANCE_ID" \
+              --cli-connect-timeout 5 --cli-read-timeout 10 \
+              --query 'Status' --output text 2>&1); then
+              case "$status" in
+                Success) break ;;
+                Pending|InProgress|Delayed|Cancelling) ;;
+                *)
+                  printf 'SSM command ended with status %.100s\n' "$status" >&2
+                  exit 1
+                  ;;
+              esac
+            elif [[ "$status" != *InvocationDoesNotExist* ]]; then
+              printf 'Could not read SSM command status: %.300s\n' "$status" >&2
+              exit 1
+            fi
+            sleep 5
+          done
+          if [[ "$status" != Success ]]; then
+            echo "Timed out waiting for SSM command success." >&2
+            exit 1
+          fi
+          echo "SSM command succeeded."
+          echo "deployed=true" >> "$GITHUB_OUTPUT"
+      - name: Check public OpenAPI endpoint over TLS
+        if: steps.release.outputs.deployed == 'true'
+        shell: bash
+        env:
+          BASE_URL: ${{ vars.PODO_AWS_BASE_URL }}
+        run: |
+          http_status=$(curl --proto '=https' --fail --silent --show-error \
+            --connect-timeout 5 --max-time 15 --retry 4 --retry-connrefused \
+            --retry-max-time 45 --output "$RUNNER_TEMP/podo-openapi.json" \
+            --write-out '%{http_code}' --url "${BASE_URL%/}/v3/api-docs/podo")
+          if [[ "$http_status" != 200 ]]; then
+            echo "Expected HTTP 200 from the OpenAPI endpoint, received $http_status." >&2
+            exit 1
+          fi
+          jq -e '.openapi | type == "string"' "$RUNNER_TEMP/podo-openapi.json" >/dev/null
