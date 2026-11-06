@@ -18,11 +18,13 @@ import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
 @RequiredArgsConstructor
 public class VisitService {
+
     private final AccountRepository accounts;
     private final ChildProfileRepository profiles;
     private final VisitRepository visits;
@@ -41,7 +43,11 @@ public class VisitService {
         lockAccount(accountId);
 
         String hash = input.requestHash();
-        var existing = visits.findByAccountIdAndCreateRequestKey(accountId, key);
+
+        var existing = visits.findByAccountIdAndCreateRequestKey(
+                accountId,
+                key
+        );
 
         if (existing.isPresent()) {
             if (!existing.get().getCreateRequestHash().equals(hash)) {
@@ -87,12 +93,18 @@ public class VisitService {
         return new Created(true, queries.owned(accountId, visit.getId()));
     }
 
-    @Transactional(readOnly = true)
+    @Transactional(
+            readOnly = true,
+            isolation = Isolation.REPEATABLE_READ
+    )
     public VisitResponse get(UUID accountId, UUID visitId) {
         return queries.owned(accountId, visitId);
     }
 
-    @Transactional(readOnly = true)
+    @Transactional(
+            readOnly = true,
+            isolation = Isolation.REPEATABLE_READ
+    )
     public CursorResponse<VisitResponse> list(
             UUID accountId,
             VisitFilter filter,
@@ -130,6 +142,7 @@ public class VisitService {
         visit.changeDate(date, clock.instant());
 
         visits.flush();
+
         return queries.owned(accountId, visitId);
     }
 
@@ -141,6 +154,7 @@ public class VisitService {
         visit.cancel(clock.instant());
 
         visits.flush();
+
         return queries.owned(accountId, visitId);
     }
 

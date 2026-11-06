@@ -21,6 +21,7 @@ import lombok.NoArgsConstructor;
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class Visit {
+
     public enum Status {
         PLANNED, QUIZ_IN_PROGRESS, COMPLETED, CANCELLED
     }
@@ -61,7 +62,9 @@ public class Visit {
     private String createRequestHash;
 
     private Instant reportedAt;
+
     private Instant completedAt;
+
     private Instant cancelledAt;
 
     @Column(nullable = false, updatable = false)
@@ -116,8 +119,38 @@ public class Visit {
         updatedAt = cancelledAt;
     }
 
+    public void startQuiz(UUID setId, Instant now) {
+        requirePlanned();
+
+        quizSetId = java.util.Objects.requireNonNull(setId);
+        status = Status.QUIZ_IN_PROGRESS;
+        reportedAt = now.truncatedTo(ChronoUnit.MICROS);
+        updatedAt = reportedAt;
+    }
+
+    public void completeQuiz(Instant now) {
+        requireInProgress();
+
+        status = Status.COMPLETED;
+        completedAt = now.truncatedTo(ChronoUnit.MICROS);
+        updatedAt = completedAt;
+    }
+
+    public void restartQuiz(UUID setId, Instant now) {
+        requireInProgress();
+
+        quizSetId = java.util.Objects.requireNonNull(setId);
+        updatedAt = now.truncatedTo(ChronoUnit.MICROS);
+    }
+
     private void requirePlanned() {
         if (status != Status.PLANNED) {
+            throw new BusinessException(ErrorCode.INVALID_VISIT_STATE);
+        }
+    }
+
+    private void requireInProgress() {
+        if (status != Status.QUIZ_IN_PROGRESS) {
             throw new BusinessException(ErrorCode.INVALID_VISIT_STATE);
         }
     }

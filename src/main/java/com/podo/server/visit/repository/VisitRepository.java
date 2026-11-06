@@ -11,6 +11,12 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 public interface VisitRepository extends JpaRepository<Visit, UUID> {
+
+    Optional<Visit> findByIdAndAccountId(
+            UUID id,
+            UUID accountId
+    );
+
     Optional<Visit> findByAccountIdAndCreateRequestKey(
             UUID accountId,
             String createRequestKey
@@ -24,7 +30,8 @@ public interface VisitRepository extends JpaRepository<Visit, UUID> {
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("""
             select visit from Visit visit
-            where visit.id = :id and visit.accountId = :accountId
+            where visit.id = :id
+              and visit.accountId = :accountId
             """)
     Optional<Visit> findOwnedLocked(
             @Param("accountId") UUID accountId,

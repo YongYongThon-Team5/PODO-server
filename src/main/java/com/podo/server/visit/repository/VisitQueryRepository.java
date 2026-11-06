@@ -2,60 +2,48 @@ package com.podo.server.visit.repository;
 
 import com.podo.server.global.exception.BusinessException;
 import com.podo.server.global.exception.ErrorCode;
+import com.podo.server.place.domain.Place;
+import com.podo.server.place.repository.PlaceAccessRepository;
+import com.podo.server.quiz.domain.QuizContent;
 import com.podo.server.visit.domain.Visit;
 import com.podo.server.visit.input.VisitFilter;
 import com.podo.server.visit.pagination.VisitCursor;
 import com.podo.server.visit.web.VisitResponse;
-import java.sql.ResultSet;
-import java.sql.SQLException;
-import java.sql.Timestamp;
-import java.time.Instant;
-import java.util.ArrayList;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.Tuple;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
 @Repository
 @RequiredArgsConstructor
 public class VisitQueryRepository {
-    private final JdbcTemplate jdbc;
+
+    private final EntityManager entityManager;
+    private final PlaceAccessRepository places;
 
     private static final String SELECT = """
-            SELECT v.*, p.name AS place_name,
-              p.status = 'PUBLISHED' AS place_available,
-              (SELECT count(*)::int
-                 FROM app.quiz_answers a
-                 JOIN app.quiz_questions q ON q.id = a.question_id
-               WHERE a.visit_id = v.id
-                 AND q.quiz_set_id = v.quiz_set_id) AS answered_count,
-              CASE WHEN s.status = 'INVALIDATED' THEN NULL ELSE
-                (SELECT count(*)::int
-                   FROM app.quiz_answers a
-                   JOIN app.quiz_questions q ON q.id = a.question_id
-                 WHERE a.visit_id = v.id
-                   AND q.quiz_set_id = v.quiz_set_id
-                   AND a.is_correct)
-              END AS correct_count,
-              (SELECT count(*)::int
-                 FROM app.quiz_hint_views h
-                 JOIN app.quiz_questions q ON q.id = h.question_id
-               WHERE h.visit_id = v.id
-                 AND q.quiz_set_id = v.quiz_set_id) AS hint_usage_count
-            FROM app.visits v
-            JOIN app.places p ON p.id = v.place_id
-            LEFT JOIN app.quiz_sets s ON s.id = v.quiz_set_id
+            select visit, place.name, place.status, quiz.status
+            from Visit visit
+            join Place place on place.id = visit.placeId
+            left join QuizSet quiz on quiz.id = visit.quizSetId
             """;
 
     public VisitResponse owned(UUID accountId, UUID visitId) {
-        return jdbc.query(
-                        SELECT + " WHERE v.account_id = ? AND v.id = ?",
-                        this::map,
-                        accountId,
-                        visitId
+        var rows = entityManager.createQuery(
+                        SELECT
+                                + " where visit.accountId = :accountId"
+                                + " and visit.id = :id",
+                        Tuple.class
                 )
-                .stream()
+                .setParameter("accountId", accountId)
+                .setParameter("id", visitId)
+                .getResultList();
+
+        return responses(rows).stream()
                 .findFirst()
                 .orElseThrow(() ->
                         new BusinessException(ErrorCode.RESOURCE_NOT_FOUND));
@@ -66,78 +54,139 @@ public class VisitQueryRepository {
             VisitFilter filter,
             VisitCursor.Position cursor
     ) {
-        String marks = String.join(
-                ",",
-                java.util.Collections.nCopies(filter.statuses().size(), "?")
-        );
-
-        StringBuilder sql = new StringBuilder(SELECT)
-                .append(" WHERE v.account_id = ? AND v.status IN (")
-                .append(marks)
-                .append(")");
-
-        List<Object> args = new ArrayList<>();
-        args.add(accountId);
-
-        filter.statuses().forEach(status -> args.add(status.name()));
+        String jpql = SELECT
+                + " where visit.accountId = :accountId"
+                + " and visit.status in :statuses";
 
         if (filter.placeId() != null) {
-            sql.append(" AND v.place_id = ?");
-            args.add(filter.placeId());
+            jpql += " and visit.placeId = :placeId";
         }
 
         if (cursor != null) {
-            sql.append(" AND (v.created_at, v.id) < (?, ?)");
-            args.add(Timestamp.from(cursor.createdAt()));
-            args.add(cursor.id());
+            jpql += """
+                     and (
+                         visit.createdAt < :createdAt
+                         or (
+                             visit.createdAt = :createdAt
+                             and visit.id < :id
+                         )
+                     )
+                    """;
         }
 
-        sql.append(" ORDER BY v.created_at DESC, v.id DESC LIMIT ?");
-        args.add(filter.limit() + 1);
+        var query = entityManager.createQuery(
+                        jpql + " order by visit.createdAt desc, visit.id desc",
+                        Tuple.class
+                )
+                .setParameter("accountId", accountId)
+                .setParameter("statuses", filter.statuses())
+                .setMaxResults(filter.limit() + 1);
 
-        return jdbc.query(sql.toString(), this::map, args.toArray());
+        if (filter.placeId() != null) {
+            query.setParameter("placeId", filter.placeId());
+        }
+
+        if (cursor != null) {
+            query.setParameter("createdAt", cursor.createdAt());
+            query.setParameter("id", cursor.id());
+        }
+
+        return responses(query.getResultList());
     }
 
     public void requirePublishedLocked(UUID placeId) {
-        var statuses = jdbc.queryForList(
-                "SELECT status FROM app.places WHERE id = ? FOR SHARE",
-                String.class,
-                placeId
-        );
+        var place = places.findLockedById(placeId)
+                .orElseThrow(() ->
+                        new BusinessException(ErrorCode.RESOURCE_NOT_FOUND));
 
-        if (statuses.isEmpty()) {
-            throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND);
-        }
-
-        if (!"PUBLISHED".equals(statuses.getFirst())) {
+        if (!Place.PUBLISHED.equals(place.getStatus())) {
             throw new BusinessException(ErrorCode.PLACE_UNAVAILABLE);
         }
     }
 
-    private VisitResponse map(ResultSet row, int index) throws SQLException {
-        return new VisitResponse(
-                row.getObject("id", UUID.class),
-                row.getObject("place_id", UUID.class),
-                row.getString("place_name"),
-                row.getBoolean("place_available"),
-                row.getObject("child_profile_id", UUID.class),
-                row.getDate("planned_date").toLocalDate(),
-                Visit.Source.valueOf(row.getString("source")),
-                Visit.Status.valueOf(row.getString("status")),
-                row.getObject("quiz_set_id", UUID.class),
-                row.getInt("answered_count"),
-                row.getObject("correct_count", Integer.class),
-                row.getInt("hint_usage_count"),
-                instant(row, "reported_at"),
-                instant(row, "completed_at"),
-                instant(row, "cancelled_at"),
-                instant(row, "created_at"),
-                instant(row, "updated_at")
-        );
-    }
+    private List<VisitResponse> responses(List<Tuple> rows) {
+        if (rows.isEmpty()) {
+            return List.of();
+        }
 
-    private Instant instant(ResultSet row, String column) throws SQLException {
-        Timestamp value = row.getTimestamp(column);
-        return value == null ? null : value.toInstant();
+        List<UUID> ids = rows.stream()
+                .map(row -> row.get(0, Visit.class).getId())
+                .toList();
+
+        Map<UUID, int[]> answerCounts = new HashMap<>();
+
+        entityManager.createQuery("""
+                select visit.id,
+                       count(answer),
+                       sum(case when answer.correct = true then 1 else 0 end)
+                from QuizAnswer answer
+                join answer.question question
+                join Visit visit on visit.id = answer.id.visitId
+                where visit.id in :ids
+                  and question.quizSetId = visit.quizSetId
+                group by visit.id
+                """, Tuple.class)
+                .setParameter("ids", ids)
+                .getResultList()
+                .forEach(row -> answerCounts.put(
+                        row.get(0, UUID.class),
+                        new int[]{
+                                row.get(1, Long.class).intValue(),
+                                row.get(2, Long.class).intValue()
+                        }
+                ));
+
+        Map<UUID, Integer> hintCounts = new HashMap<>();
+
+        entityManager.createQuery("""
+                select visit.id, count(hint)
+                from QuizHintView hint
+                join hint.question question
+                join Visit visit on visit.id = hint.id.visitId
+                where visit.id in :ids
+                  and question.quizSetId = visit.quizSetId
+                group by visit.id
+                """, Tuple.class)
+                .setParameter("ids", ids)
+                .getResultList()
+                .forEach(row -> hintCounts.put(
+                        row.get(0, UUID.class),
+                        row.get(1, Long.class).intValue()
+                ));
+
+        return rows.stream().map(row -> {
+            Visit visit = row.get(0, Visit.class);
+
+            int[] counts = answerCounts.getOrDefault(
+                    visit.getId(),
+                    new int[]{0, 0}
+            );
+
+            Integer score =
+                    row.get(3, QuizContent.Status.class)
+                            == QuizContent.Status.INVALIDATED
+                            ? null
+                            : counts[1];
+
+            return new VisitResponse(
+                    visit.getId(),
+                    visit.getPlaceId(),
+                    row.get(1, String.class),
+                    Place.PUBLISHED.equals(row.get(2, String.class)),
+                    visit.getChildProfileId(),
+                    visit.getPlannedDate(),
+                    visit.getSource(),
+                    visit.getStatus(),
+                    visit.getQuizSetId(),
+                    counts[0],
+                    score,
+                    hintCounts.getOrDefault(visit.getId(), 0),
+                    visit.getReportedAt(),
+                    visit.getCompletedAt(),
+                    visit.getCancelledAt(),
+                    visit.getCreatedAt(),
+                    visit.getUpdatedAt()
+            );
+        }).toList();
     }
 }
