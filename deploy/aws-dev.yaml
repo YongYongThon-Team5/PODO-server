@@ -1,0 +1,357 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: PODO development API and PostgreSQL on one EC2 instance, deployed from GitHub Actions.
+Metadata:
+  AWSToolsMetrics:
+    AWSAgentToolkit: aws-cloudformation@3
+Parameters:
+  AmiId:
+    Type: AWS::EC2::Image::Id
+    Description: A pinned Amazon Linux 2023 x86_64 AMI ID in the target region.
+  GitHubDevSubject:
+    Type: String
+    AllowedPattern: '^repo:[A-Za-z0-9_.@-]+/[A-Za-z0-9_.@-]+:ref:refs/heads/dev$'
+    Description: Exact GitHub OIDC subject for the dev branch, including IDs when enabled.
+  ExistingGitHubProviderArn:
+    Type: String
+    Default: ''
+    Description: Leave empty to create the GitHub OIDC provider in this account.
+Conditions:
+  CreateGitHubProvider: !Equals [!Ref ExistingGitHubProviderArn, '']
+Resources:
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.42.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: !Ref AWS::StackName
+  Gateway:
+    Type: AWS::EC2::InternetGateway
+  GatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref Vpc
+      InternetGatewayId: !Ref Gateway
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.42.1.0/24
+  RouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+  InternetRoute:
+    Type: AWS::EC2::Route
+    DependsOn: GatewayAttachment
+    Properties:
+      RouteTableId: !Ref RouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref Gateway
+  PublicSubnetRouteTable:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref RouteTable
+      SubnetId: !Ref PublicSubnet
+  WebSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: HTTPS for team integration and HTTP for ACME validation and redirect.
+        must: Keep SSH, PostgreSQL, and the raw Spring port closed.
+    Properties:
+      GroupDescription: Public web ports only. Admin access uses Systems Manager.
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+  Address:
+    Type: AWS::EC2::EIP
+    DependsOn: GatewayAttachment
+    Properties:
+      Domain: vpc
+  AddressAssociation:
+    Type: AWS::EC2::EIPAssociation
+    Properties:
+      AllocationId: !GetAtt Address.AllocationId
+      InstanceId: !Ref Server
+  Artifacts:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: RetainExceptOnCreate
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireBuilds
+            Status: Enabled
+            Prefix: releases/
+            ExpirationInDays: 14
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 7
+  ArtifactsPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref Artifacts
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: RequireTLS
+            Effect: Deny
+            Principal: '*'
+            Action: s3:*
+            Resource: [!GetAtt Artifacts.Arn, !Sub '${Artifacts.Arn}/*']
+            Condition:
+              Bool:
+                aws:SecureTransport: 'false'
+  ServerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: ReadDeployArtifacts
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: s3:GetObject
+                Resource: !Sub '${Artifacts.Arn}/releases/*'
+  ServerProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles: [!Ref ServerRole]
+  Server:
+    Type: AWS::EC2::Instance
+    DependsOn: [InternetRoute, PublicSubnetRouteTable]
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Run Spring and a single PostgreSQL instance for team development.
+        must: PostgreSQL data lives in the encrypted root volume, which is preserved on instance termination.
+    CreationPolicy:
+      ResourceSignal:
+        Count: 1
+        Timeout: PT15M
+    Properties:
+      ImageId: !Ref AmiId
+      InstanceType: t3.small
+      CreditSpecification:
+        CPUCredits: standard
+      IamInstanceProfile: !Ref ServerProfile
+      MetadataOptions:
+        HttpTokens: required
+        HttpPutResponseHopLimit: 1
+        HttpEndpoint: enabled
+      NetworkInterfaces:
+        - DeviceIndex: '0'
+          AssociatePublicIpAddress: true
+          SubnetId: !Ref PublicSubnet
+          GroupSet: [!Ref WebSecurityGroup]
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeType: gp3
+            VolumeSize: 20
+            Encrypted: true
+            DeleteOnTermination: false
+      Tags:
+        - Key: Name
+          Value: !Ref AWS::StackName
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -euo pipefail
+          trap '/opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource Server --region ${AWS::Region}' EXIT
+
+          dnf install -y docker java-21-amazon-corretto-headless
+          systemctl enable --now docker amazon-ssm-agent
+          useradd --system --home-dir /opt/podo --shell /sbin/nologin podo
+          install -d -m 0755 /opt/podo
+          install -d -m 0700 /etc/podo
+          umask 077
+          printf 'POSTGRES_DB=podo\nPOSTGRES_USER=podo\nPOSTGRES_PASSWORD=%s\n' "$(openssl rand -hex 32)" > /etc/podo/postgres.env
+          docker run -d --name podo-postgres --restart unless-stopped \
+            --env-file /etc/podo/postgres.env --publish 127.0.0.1:5432:5432 \
+            --volume podo-postgres:/var/lib/postgresql/data postgres:17.11
+
+          cat > /etc/podo/Caddyfile <<'CADDY'
+          {
+              admin off
+              default_sni ${Address}
+          }
+          https://${Address} {
+              tls {
+                  issuer acme https://acme-v02.api.letsencrypt.org/directory {
+                      profile shortlived
+                  }
+              }
+              reverse_proxy 127.0.0.1:8080
+          }
+          CADDY
+          docker run -d --name podo-caddy --restart unless-stopped --network host \
+            --volume /etc/podo/Caddyfile:/etc/caddy/Caddyfile:ro \
+            --volume podo-caddy:/data caddy:2.11.9-alpine
+
+          cat > /etc/systemd/system/podo.service <<'UNIT'
+          [Unit]
+          Description=PODO Spring Boot API
+          After=network-online.target docker.service
+          Wants=network-online.target
+          Requires=docker.service
+          ConditionPathExists=/opt/podo/server.jar
+
+          [Service]
+          User=podo
+          WorkingDirectory=/opt/podo
+          Environment=API_ORIGIN=https://${Address}
+          Environment=SERVER_ADDRESS=127.0.0.1
+          EnvironmentFile=/etc/podo/postgres.env
+          EnvironmentFile=-/etc/podo/app.env
+          ExecStart=/usr/bin/java -Xmx640m -jar /opt/podo/server.jar
+          Restart=on-failure
+          RestartSec=5
+          NoNewPrivileges=true
+          IPAddressDeny=169.254.169.254/32
+
+          [Install]
+          WantedBy=multi-user.target
+          UNIT
+          chmod 0644 /etc/systemd/system/podo.service
+          systemctl daemon-reload
+          systemctl enable podo.service
+          for _ in {1..30}; do
+            if docker exec podo-postgres pg_isready -h 127.0.0.1 -U podo -d podo; then
+              exit 0
+            fi
+            sleep 2
+          done
+          exit 1
+  DeployDocument:
+    Type: AWS::SSM::Document
+    Properties:
+      DocumentType: Command
+      UpdateMethod: NewVersion
+      Content:
+        schemaVersion: '2.2'
+        description: Install a PODO release and verify that Spring responds.
+        parameters:
+          ReleaseId:
+            type: String
+            interpolationType: ENV_VAR
+            allowedPattern: '^[a-f0-9]{40}-[0-9]+-[0-9]+$'
+        mainSteps:
+          - action: aws:runShellScript
+            name: Deploy
+            inputs:
+              timeoutSeconds: '240'
+              runCommand:
+                - !Sub |
+                    #!/bin/bash
+                    set -euo pipefail
+                    if [[ ! -v SSM_ReleaseId ]]; then
+                      export SSM_ReleaseId='{{ReleaseId}}'
+                    fi
+                    exec 9>/opt/podo/deploy.lock
+                    flock -w 15 9
+                    cd /opt/podo
+                    next=$(mktemp server.XXXXXX.jar)
+                    trap 'rm -f "$next"' EXIT
+                    aws s3api get-object --bucket '${Artifacts}' --key "releases/$SSM_ReleaseId.jar" --checksum-mode ENABLED "$next" --no-cli-pager >/dev/null
+                    chmod 0644 "$next"
+                    if [ -f server.jar ]; then
+                      cp server.jar previous.jar
+                    fi
+                    mv "$next" server.jar
+                    if systemctl restart podo && curl --fail --silent --retry 25 --retry-all-errors \
+                      --retry-delay 2 --retry-max-time 90 --max-time 4 -o /dev/null http://127.0.0.1:8080/v3/api-docs/podo; then
+                      rm -f previous.jar
+                      echo "PODO release $SSM_ReleaseId is responding"
+                      exit 0
+                    fi
+                    echo 'The new JAR failed the startup check' >&2
+                    if [ -f previous.jar ]; then
+                      mv previous.jar server.jar
+                      systemctl restart podo
+                    else
+                      systemctl stop podo
+                      rm -f server.jar
+                    fi
+                    exit 1
+  GitHubProvider:
+    Type: AWS::IAM::OIDCProvider
+    Condition: CreateGitHubProvider
+    DeletionPolicy: RetainExceptOnCreate
+    UpdateReplacePolicy: Retain
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList: [sts.amazonaws.com]
+  GitHubDeployRole:
+    Type: AWS::IAM::Role
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Deploy JARs from the dev branch using short-lived GitHub OIDC credentials.
+        must: Match the repository's exact dev subject and restrict Run Command to this document and instance.
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !If [CreateGitHubProvider, !Ref GitHubProvider, !Ref ExistingGitHubProviderArn]
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+                token.actions.githubusercontent.com:sub: !Ref GitHubDevSubject
+      Policies:
+        - PolicyName: DeployPodoRelease
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: s3:PutObject
+                Resource: !Sub '${Artifacts.Arn}/releases/*'
+              - Effect: Allow
+                Action: ssm:SendCommand
+                Resource:
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:document/${DeployDocument}
+                  - !Sub arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/${Server}
+              - Effect: Allow
+                Action: ssm:GetCommandInvocation
+                Resource: '*'
+Outputs:
+  DeployRoleArn:
+    Value: !GetAtt GitHubDeployRole.Arn
+  ArtifactBucket:
+    Value: !Ref Artifacts
+  InstanceId:
+    Value: !Ref Server
+  DeployDocumentName:
+    Value: !Ref DeployDocument
+  BaseUrl:
+    Value: !Sub https://${Address}
