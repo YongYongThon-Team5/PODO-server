@@ -1,10 +1,10 @@
 # PODO 개발 서버 배포
 
-서울 리전의 `podo-dev` 스택은 EC2 `t4g.small` 한 대에서 Spring Boot와 PostgreSQL 17을 실행한다. Caddy가 고정 IP의 HTTPS 인증서를 자동으로 갱신한다. 외부에는 HTTPS와 인증서 검증·리디렉션용 HTTP 포트만 열고, 서버 관리에는 AWS Systems Manager를 사용한다.
+서울 리전의 `podo-dev` 스택은 EC2 `t3.small` 한 대(x86_64, 2 vCPU, RAM 2 GiB, gp3 20 GiB)에서 Spring Boot와 PostgreSQL 17을 실행한다. Caddy가 고정 IP의 HTTPS 인증서를 자동으로 갱신한다. 외부에는 HTTPS와 인증서 검증·리디렉션용 HTTP 포트만 열고, 서버 관리에는 AWS Systems Manager를 사용한다.
 
 ## 처음 연결할 때
 
-1. [aws-dev.yaml](./aws-dev.yaml)로 서울 리전에 CloudFormation 스택을 생성한다. `GitHubDevSubject`에는 GitHub API `GET /repos/YongYongThon-Team5/PODO-server/actions/oidc/customization/sub`가 반환한 `sub_claim_prefix`에 `:ref:refs/heads/dev`를 붙여 입력한다. `AmiId`에는 서울 리전 SSM 공개 파라미터 `/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64`의 현재 AMI ID를 입력하고, 후속 스택 업데이트에는 기존 값을 유지한다. 계정에 `token.actions.githubusercontent.com` OIDC 공급자가 이미 있다면 `ExistingGitHubProviderArn`에 해당 ARN을 입력한다.
+1. [aws-dev.yaml](./aws-dev.yaml)로 서울 리전에 CloudFormation 스택을 생성한다. `GitHubDevSubject`에는 GitHub API `GET /repos/YongYongThon-Team5/PODO-server/actions/oidc/customization/sub`가 반환한 `sub_claim_prefix`에 `:ref:refs/heads/dev`를 붙여 입력한다. `AmiId`에는 서울 리전 SSM 공개 파라미터 `/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64`의 현재 AMI ID를 입력하고, 후속 스택 업데이트에는 기존 값을 유지한다. 계정에 `token.actions.githubusercontent.com` OIDC 공급자가 이미 있다면 `ExistingGitHubProviderArn`에 해당 ARN을 입력한다.
 2. 스택 출력으로 아래 GitHub Actions 저장소 변수를 설정한다. AWS 인증은 배포 시 발급되는 임시 자격 증명을 사용한다.
 
    | 스택 출력 | GitHub Actions 변수 |

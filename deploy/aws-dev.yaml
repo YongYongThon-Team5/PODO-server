@@ -6,7 +6,7 @@ Metadata:
 Parameters:
   AmiId:
     Type: AWS::EC2::Image::Id
-    Description: A pinned Amazon Linux 2023 arm64 AMI ID in the target region.
+    Description: A pinned Amazon Linux 2023 x86_64 AMI ID in the target region.
   GitHubDevSubject:
     Type: String
     AllowedPattern: '^repo:[A-Za-z0-9_.@-]+/[A-Za-z0-9_.@-]+:ref:refs/heads/dev$'
@@ -159,7 +159,7 @@ Resources:
         Timeout: PT15M
     Properties:
       ImageId: !Ref AmiId
-      InstanceType: t4g.small
+      InstanceType: t3.small
       CreditSpecification:
         CPUCredits: standard
       IamInstanceProfile: !Ref ServerProfile
