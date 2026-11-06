@@ -48,3 +48,6 @@ out/
 !.env.example
 src/main/resources/application-local.yml
 src/main/resources/application-local.yaml
+
+# Local profile image files
+/var/profile-images/

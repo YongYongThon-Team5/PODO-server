@@ -6,11 +6,13 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatusCode;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.context.request.WebRequest;
+import org.springframework.web.multipart.MultipartException;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
 
 import java.util.Map;
@@ -34,6 +36,11 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
                 .status(ex.getErrorCode().getStatus())
                 .headers(errorHeaders(new HttpHeaders(), body))
                 .body(body);
+    }
+
+    @ExceptionHandler(MultipartException.class)
+    public ResponseEntity<ErrorResponse> handleMalformedMultipart() {
+        return handleBusinessException(new BusinessException(ErrorCode.INVALID_REQUEST));
     }
 
     @ExceptionHandler(Exception.class)
@@ -123,6 +130,7 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         HttpHeaders headers = new HttpHeaders();
         headers.addAll(original);
         headers.setCacheControl("no-store");
+        headers.setContentType(MediaType.APPLICATION_JSON);
         headers.set("X-Request-Id", body.error().requestId());
 
         if (body.error().code().equals(ErrorCode.AUTHENTICATION_REQUIRED.name())
