@@ -1,0 +1,32 @@
+podo:
+  profile:
+    options:
+      colors:
+        - code: RED
+          label: 빨강
+          hex: "#EF4444"
+          active: true
+        - code: ORANGE
+          label: 주황
+          hex: "#F97316"
+          active: true
+        - code: YELLOW
+          label: 노랑
+          hex: "#EAB308"
+          active: true
+        - code: GREEN
+          label: 초록
+          hex: "#22C55E"
+          active: true
+        - code: BLUE
+          label: 파랑
+          hex: "#3B82F6"
+          active: true
+        - code: INDIGO
+          label: 남색
+          hex: "#312E81"
+          active: true
+        - code: PURPLE
+          label: 보라
+          hex: "#A855F7"
+          active: true
