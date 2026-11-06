@@ -230,6 +230,7 @@ Resources:
           WorkingDirectory=/opt/podo
           Environment=API_ORIGIN=https://${Address}
           Environment=SERVER_ADDRESS=127.0.0.1
+          Environment=SPRING_PROFILES_ACTIVE=dev
           EnvironmentFile=/etc/podo/postgres.env
           EnvironmentFile=-/etc/podo/app.env
           ExecStart=/usr/bin/java -Xmx640m -jar /opt/podo/server.jar
