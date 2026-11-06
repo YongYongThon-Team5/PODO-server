@@ -1,7 +1,50 @@
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    disable-swagger-default-url: true
+    persist-authorization: false
+
 spring:
   application:
     name: podo-server
 
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:${DB_PORT:5432}/${POSTGRES_DB:podo}}
+    username: ${POSTGRES_USER}
+    password: ${POSTGRES_PASSWORD}
+
+  flyway:
+    default-schema: app
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        default_schema: app
+    open-in-view: false
+
+  sql:
+    init:
+      mode: never
+
   jackson:
     deserialization:
       fail-on-unknown-properties: true
+
+podo:
+  auth:
+    api-origin: ${API_ORIGIN:https://localhost:8443}
+    success-redirect-uri: ${AUTH_SUCCESS_REDIRECT_URI:${API_ORIGIN:https://localhost:8443}/auth/success}
+    failure-redirect-uri: ${AUTH_FAILURE_REDIRECT_URI:${API_ORIGIN:https://localhost:8443}/auth/error}
+    csrf-signing-key: ${AUTH_CSRF_SIGNING_KEY:}
+    kakao:
+      client-id: ${KAKAO_CLIENT_ID:}
+      client-secret: ${KAKAO_CLIENT_SECRET:}
+      redirect-uri: ${KAKAO_REDIRECT_URI:${API_ORIGIN:https://localhost:8443}/api/auth/callback/kakao}
+  profile:
+    options:
+      age-bands: []
+      colors: []
