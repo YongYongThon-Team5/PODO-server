@@ -30,6 +30,11 @@ spring:
     init:
       mode: never
 
+  servlet:
+    multipart:
+      max-file-size: 5MB
+      max-request-size: 6MB
+
   jackson:
     deserialization:
       fail-on-unknown-properties: true
@@ -45,6 +50,7 @@ podo:
       client-secret: ${KAKAO_CLIENT_SECRET:}
       redirect-uri: ${KAKAO_REDIRECT_URI:${API_ORIGIN:https://localhost:8443}/api/auth/callback/kakao}
   profile:
+    image-directory: ${PODO_PROFILE_IMAGE_DIRECTORY:./var/profile-images}
     options:
       age-bands: []
       colors: []

@@ -14,16 +14,13 @@ import org.hibernate.annotations.Immutable;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
-/**
- * 장소. 데이터는 운영 SQL로 적재하고 서버는 읽기만 한다.
- * images(jsonb)는 Entity에 매핑하지 않고 PlaceRepository의 네이티브 쿼리로 읽는다.
- */
 @Entity
 @Immutable
 @Table(name = "places", schema = "app")
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class Place {
+
     public static final String PUBLISHED = "PUBLISHED";
 
     @Id
@@ -75,15 +72,27 @@ public class Place {
     private String[] cautions;
 
     @JdbcTypeCode(SqlTypes.ARRAY)
-    @Column(name = "interest_category_ids", nullable = false, columnDefinition = "uuid[]")
+    @Column(
+            name = "interest_category_ids",
+            nullable = false,
+            columnDefinition = "uuid[]"
+    )
     private UUID[] interestCategoryIds;
 
     @JdbcTypeCode(SqlTypes.ARRAY)
-    @Column(name = "book_genre_ids", nullable = false, columnDefinition = "uuid[]")
+    @Column(
+            name = "book_genre_ids",
+            nullable = false,
+            columnDefinition = "uuid[]"
+    )
     private UUID[] bookGenreIds;
 
     @JdbcTypeCode(SqlTypes.ARRAY)
-    @Column(name = "purpose_ids", nullable = false, columnDefinition = "uuid[]")
+    @Column(
+            name = "purpose_ids",
+            nullable = false,
+            columnDefinition = "uuid[]"
+    )
     private UUID[] purposeIds;
 
     @Column(name = "map_place_url", columnDefinition = "text")

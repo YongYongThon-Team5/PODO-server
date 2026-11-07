@@ -17,6 +17,7 @@ import org.hibernate.annotations.Immutable;
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class PlaceSource {
+
     public static final String ACTIVE = "ACTIVE";
 
     @Id
