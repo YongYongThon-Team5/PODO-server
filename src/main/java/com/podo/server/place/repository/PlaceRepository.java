@@ -13,6 +13,25 @@ public interface PlaceRepository extends JpaRepository<Place, UUID> {
 
     Optional<Place> findByIdAndStatus(UUID id, String status);
 
+    List<Place> findByStatus(String status);
+
+    List<Place> findByStatusAndDistrictCode(String status, String districtCode);
+
+    /**
+     * 인기 장소: 방문 신고(reported_at)가 있는 방문을 공개 장소별 서로 다른 계정 수로 센다.
+     * [placeId 문자열, 계정 수]. 계정 수 DESC → 이름 COLLATE "C" ASC → id ASC, 최대 15곳.
+     */
+    @Query(value = """
+            SELECT CAST(p.id AS text), count(DISTINCT v.account_id)
+            FROM app.visits v
+            JOIN app.places p ON p.id = v.place_id
+            WHERE v.reported_at IS NOT NULL AND p.status = 'PUBLISHED'
+            GROUP BY p.id, p.name
+            ORDER BY count(DISTINCT v.account_id) DESC, p.name COLLATE "C", p.id
+            LIMIT 15
+            """, nativeQuery = true)
+    List<Object[]> findPopularRows();
+
     /** 공개 장소 목록. name ASC(바이트 순서), id ASC 키셋 페이지네이션. */
     @Query(value = """
             SELECT p.* FROM app.places p

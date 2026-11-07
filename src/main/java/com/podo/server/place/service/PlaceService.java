@@ -65,14 +65,19 @@ public class PlaceService {
                 afterName, afterId, limit + 1);
         boolean hasNext = rows.size() > limit;
         List<Place> page = hasNext ? rows.subList(0, limit) : rows;
-        List<UUID> ids = page.stream().map(Place::getId).toList();
-        Map<UUID, String> thumbnails = thumbnails(ids);
-        Map<UUID, String> quiz = quizAvailability(ids);
-        List<PlaceSummary> items = page.stream()
-                .map(p -> summary(p, thumbnails.get(p.getId()), quiz.getOrDefault(p.getId(), "NOT_READY")))
-                .toList();
+        List<PlaceSummary> items = summaries(page);
         String next = hasNext ? encodeCursor(filterKey, page.get(page.size() - 1)) : null;
         return new CursorResponse<>(items, next);
+    }
+
+    /** 장소 목록을 PlaceSummary로 바꾼다(순서 유지). 추천·인기에서도 쓴다. */
+    public List<PlaceSummary> summaries(List<Place> list) {
+        List<UUID> ids = list.stream().map(Place::getId).toList();
+        Map<UUID, String> thumbnails = thumbnails(ids);
+        Map<UUID, String> quiz = quizAvailability(ids);
+        return list.stream()
+                .map(p -> summary(p, thumbnails.get(p.getId()), quiz.getOrDefault(p.getId(), "NOT_READY")))
+                .toList();
     }
 
     public PlaceDetail detail(UUID placeId, LocalDate visitDate) {
@@ -95,7 +100,7 @@ public class PlaceService {
 
     private Weather weatherOrUnknown(Place place, LocalDate date) {
         try {
-            return weather.forecast(place.getLatitude(), place.getLongitude(), date);
+            return weather.forecast(place.getDistrictCode(), place.getLatitude(), place.getLongitude(), date);
         } catch (RuntimeException ex) {
             return Weather.unknown(date, "PROVIDER_FAILURE");
         }
