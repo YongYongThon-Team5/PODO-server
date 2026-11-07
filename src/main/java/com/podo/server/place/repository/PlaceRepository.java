@@ -60,18 +60,4 @@ public interface PlaceRepository extends JpaRepository<Place, UUID> {
     @Query(value = "SELECT CAST(p.images AS text) FROM app.places p WHERE p.id = :id", nativeQuery = true)
     String findImagesJson(@Param("id") UUID id);
 
-    /**
-     * [placeId 문자열, 3문항 공개 세트 존재 여부, 정정(INVALIDATED) 세트 존재 여부].
-     * 퀴즈 테이블은 C 담당이라 Entity 없이 읽기만 한다.
-     */
-    @Query(value = """
-            SELECT CAST(s.place_id AS text),
-                   bool_or(s.status = 'PUBLISHED'
-                           AND (SELECT count(*) FROM app.quiz_questions q WHERE q.quiz_set_id = s.id) = 3),
-                   bool_or(s.status = 'INVALIDATED')
-            FROM app.quiz_sets s
-            WHERE s.place_id IN (:ids)
-            GROUP BY s.place_id
-            """, nativeQuery = true)
-    List<Object[]> findQuizStateRows(@Param("ids") Collection<UUID> ids);
 }

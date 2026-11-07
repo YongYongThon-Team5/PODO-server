@@ -74,9 +74,8 @@ public class PlaceService {
     public List<PlaceSummary> summaries(List<Place> list) {
         List<UUID> ids = list.stream().map(Place::getId).toList();
         Map<UUID, String> thumbnails = thumbnails(ids);
-        Map<UUID, String> quiz = quizAvailability(ids);
         return list.stream()
-                .map(p -> summary(p, thumbnails.get(p.getId()), quiz.getOrDefault(p.getId(), "NOT_READY")))
+                .map(p -> summary(p, thumbnails.get(p.getId())))
                 .toList();
     }
 
@@ -84,14 +83,13 @@ public class PlaceService {
         Place place = places.findByIdAndStatus(placeId, Place.PUBLISHED)
                 .orElseThrow(() -> new BusinessException(ErrorCode.RESOURCE_NOT_FOUND));
         List<PlaceImage> images = images(placeId);
-        String quiz = quizAvailability(List.of(placeId)).getOrDefault(placeId, "NOT_READY");
         List<SourceReference> refs = sources.findByPlaceIdAndStatusOrderByIdAsc(placeId, PlaceSource.ACTIVE).stream()
                 .map(s -> new SourceReference(s.getId(), s.getSourceType(), s.getSourceUrl(), s.getCheckedAt()))
                 .toList();
         Weather w = visitDate == null ? null : weatherOrUnknown(place, visitDate);
         return new PlaceDetail(place.getId(), place.getName(), place.getAddress(), place.getLatitude(),
                 place.getLongitude(), place.getDistrictCode(), list(place.getMainActivities()), place.getEnvironment(),
-                images.isEmpty() ? null : images.get(0).url(), quiz, place.getDescription(), images,
+                images.isEmpty() ? null : images.get(0).url(), place.getDescription(), images,
                 place.getOpeningHours(), place.getFeeInfo(), place.getTargetAgeInfo(),
                 nullableList(place.getAmenities()), nullableList(place.getCautions()), refs, w,
                 new MapLinks(place.getMapPlaceUrl(), place.getMapDirectionsUrl()),
@@ -106,9 +104,9 @@ public class PlaceService {
         }
     }
 
-    private PlaceSummary summary(Place p, String thumbnailUrl, String quiz) {
+    private PlaceSummary summary(Place p, String thumbnailUrl) {
         return new PlaceSummary(p.getId(), p.getName(), p.getAddress(), p.getLatitude(), p.getLongitude(),
-                p.getDistrictCode(), list(p.getMainActivities()), p.getEnvironment(), thumbnailUrl, quiz,
+                p.getDistrictCode(), list(p.getMainActivities()), p.getEnvironment(), thumbnailUrl,
                 list(p.getInterestCategoryIds()));
     }
 
@@ -121,21 +119,6 @@ public class PlaceService {
             if (row[1] != null) {
                 result.put(UUID.fromString((String) row[0]), (String) row[1]);
             }
-        }
-        return result;
-    }
-
-    /** READY: 3문항 공개 세트 있음, CORRECTION_REQUIRED: 공개 세트 없이 정정 세트만 있음, 그 외 NOT_READY. */
-    private Map<UUID, String> quizAvailability(Collection<UUID> ids) {
-        Map<UUID, String> result = new HashMap<>();
-        if (ids.isEmpty()) {
-            return result;
-        }
-        for (Object[] row : places.findQuizStateRows(ids)) {
-            UUID id = UUID.fromString((String) row[0]);
-            boolean ready = Boolean.TRUE.equals(row[1]);
-            boolean invalidated = Boolean.TRUE.equals(row[2]);
-            result.put(id, ready ? "READY" : invalidated ? "CORRECTION_REQUIRED" : "NOT_READY");
         }
         return result;
     }

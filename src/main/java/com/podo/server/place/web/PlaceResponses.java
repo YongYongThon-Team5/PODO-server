@@ -15,7 +15,7 @@ public final class PlaceResponses {
 
     @JsonInclude(JsonInclude.Include.ALWAYS)
     @Schema(name = "PlaceSummary", requiredProperties = {"id", "name", "address", "latitude", "longitude", "districtCode",
-            "mainActivities", "environment", "thumbnailUrl", "quizAvailability", "interestCategoryIds"},
+            "mainActivities", "environment", "thumbnailUrl", "interestCategoryIds"},
             additionalProperties = Schema.AdditionalPropertiesValue.FALSE)
     public record PlaceSummary(
             UUID id,
@@ -27,14 +27,13 @@ public final class PlaceResponses {
             List<String> mainActivities,
             @Schema(allowableValues = {"INDOOR", "OUTDOOR", "MIXED", "UNKNOWN"}) String environment,
             @Schema(types = {"string", "null"}, format = "uri") String thumbnailUrl,
-            @Schema(allowableValues = {"READY", "NOT_READY", "CORRECTION_REQUIRED"}) String quizAvailability,
             @ArraySchema(uniqueItems = true) List<UUID> interestCategoryIds
     ) {
     }
 
     @JsonInclude(JsonInclude.Include.ALWAYS)
     @Schema(name = "PlaceDetail", requiredProperties = {"id", "name", "address", "latitude", "longitude", "districtCode",
-            "mainActivities", "environment", "thumbnailUrl", "quizAvailability", "description", "images", "openingHours",
+            "mainActivities", "environment", "thumbnailUrl", "description", "images", "openingHours",
             "feeInfo", "targetAgeInfo", "amenities", "cautions", "sources", "weather", "mapLinks", "interestCategoryIds"},
             additionalProperties = Schema.AdditionalPropertiesValue.FALSE)
     public record PlaceDetail(
@@ -47,7 +46,6 @@ public final class PlaceResponses {
             List<String> mainActivities,
             @Schema(allowableValues = {"INDOOR", "OUTDOOR", "MIXED", "UNKNOWN"}) String environment,
             @Schema(types = {"string", "null"}, format = "uri") String thumbnailUrl,
-            @Schema(allowableValues = {"READY", "NOT_READY", "CORRECTION_REQUIRED"}) String quizAvailability,
             @Schema(types = {"string", "null"}) String description,
             List<PlaceImage> images,
             @Schema(types = {"string", "null"}) String openingHours,

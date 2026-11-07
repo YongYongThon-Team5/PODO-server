@@ -82,9 +82,6 @@ public class RecommendationController {
         } catch (DateTimeParseException ex) {
             throw new BusinessException(ErrorCode.INVALID_DATE);
         }
-        if (visitDate.isBefore(LocalDate.now(com.podo.server.weather.Weather.SEOUL))) {
-            throw new BusinessException(ErrorCode.INVALID_DATE);
-        }
         String purposeCode = text(body, "purposeCode", true);
         if (purposeCode.isEmpty() || purposeCode.length() > 64) {
             throw new BusinessException(ErrorCode.INVALID_REQUEST);
