@@ -33,7 +33,7 @@ spring:
   servlet:
     multipart:
       max-file-size: 5MB
-      max-request-size: 6MB
+      max-request-size: 16MB
 
   jackson:
     deserialization:
@@ -49,8 +49,23 @@ podo:
       client-id: ${KAKAO_CLIENT_ID:}
       client-secret: ${KAKAO_CLIENT_SECRET:}
       redirect-uri: ${KAKAO_REDIRECT_URI:${API_ORIGIN:https://localhost:8443}/api/auth/callback/kakao}
+
   profile:
     image-directory: ${PODO_PROFILE_IMAGE_DIRECTORY:./var/profile-images}
     options:
       age-bands: []
       colors: []
+
+  observation:
+    enabled: ${PODO_OBSERVATION_ENABLED:false}
+    auto-publish: ${PODO_OBSERVATION_AUTO_PUBLISH:false}
+    worker-enabled: ${PODO_OBSERVATION_WORKER_ENABLED:true}
+    storage-directory: ${PODO_OBSERVATION_DIRECTORY:./var/observations}
+    api-key: ${GEMINI_API_KEY:}
+    model: ${GEMINI_MODEL:gemini-3.8-flash}
+    connect-timeout: 5s
+    request-timeout: 90s
+    lease-duration: 5m
+    poll-interval: 5s
+    max-attempts: 3
+    max-uploads-per-visit: 3

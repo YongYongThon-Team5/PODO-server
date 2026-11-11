@@ -41,37 +41,65 @@ class VisitMigrationTests {
                 """);
 
         jdbc.update("""
-                INSERT INTO app.places
-                    (id, name, environment, status, updated_at)
-                VALUES
-                    ('10000000-0000-4000-8000-000000000002',
-                     '기존 장소', 'UNKNOWN', 'DRAFT', now())
+                INSERT INTO app.places (
+                    id,
+                    name,
+                    environment,
+                    status,
+                    updated_at
+                )
+                VALUES (
+                    '10000000-0000-4000-8000-000000000002',
+                    '기존 장소',
+                    'UNKNOWN',
+                    'DRAFT',
+                    now()
+                )
                 """);
 
         jdbc.update("""
-                INSERT INTO app.quiz_sets
-                    (id, place_id, version, status)
-                VALUES
-                    ('10000000-0000-4000-8000-000000000003',
-                     '10000000-0000-4000-8000-000000000002',
-                     1, 'PUBLISHED')
+                INSERT INTO app.quiz_sets (
+                    id,
+                    place_id,
+                    version,
+                    status
+                )
+                VALUES (
+                    '10000000-0000-4000-8000-000000000003',
+                    '10000000-0000-4000-8000-000000000002',
+                    1,
+                    'PUBLISHED'
+                )
                 """);
 
         jdbc.update("""
                 INSERT INTO app.visits (
-                    id, account_id, place_id, planned_date,
-                    source, status, quiz_set_id,
-                    create_request_key, create_request_hash,
-                    reported_at, created_at, updated_at
+                    id,
+                    account_id,
+                    place_id,
+                    planned_date,
+                    source,
+                    status,
+                    quiz_set_id,
+                    create_request_key,
+                    create_request_hash,
+                    reported_at,
+                    created_at,
+                    updated_at
                 )
                 VALUES (
                     '10000000-0000-4000-8000-000000000004',
                     '10000000-0000-4000-8000-000000000001',
                     '10000000-0000-4000-8000-000000000002',
-                    '2026-11-07', 'MAP', 'QUIZ_IN_PROGRESS',
+                    '2026-11-07',
+                    'MAP',
+                    'QUIZ_IN_PROGRESS',
                     '10000000-0000-4000-8000-000000000003',
-                    'migration-request', 'original-hash',
-                    now(), now(), now()
+                    'migration-request',
+                    'original-hash',
+                    now(),
+                    now(),
+                    now()
                 )
                 """);
 
@@ -80,7 +108,10 @@ class VisitMigrationTests {
                 .defaultSchema("app")
                 .load();
 
-        assertThat(latest.migrate().migrationsExecuted).isEqualTo(1);
+        // V2 다음에는 V3와 V4 두 개가 적용된다.
+        assertThat(
+                latest.migrate().migrationsExecuted
+        ).isEqualTo(2);
 
         latest.validate();
 
@@ -115,13 +146,16 @@ class VisitMigrationTests {
         assertThat(
                 jdbc.queryForObject(
                         """
-                        SELECT count(*) FROM app.quiz_sets
+                        SELECT count(*)
+                        FROM app.quiz_sets
                         WHERE observation_id IS NULL
                         """,
                         Integer.class
                 )
         ).isEqualTo(1);
 
-        assertThat(latest.migrate().migrationsExecuted).isZero();
+        assertThat(
+                latest.migrate().migrationsExecuted
+        ).isZero();
     }
 }

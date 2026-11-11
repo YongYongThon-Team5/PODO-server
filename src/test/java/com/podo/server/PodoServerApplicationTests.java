@@ -54,14 +54,15 @@ class PodoServerApplicationTests {
     void initializesTheDomainSchemaAndDoesNotReapplyTheMigration() {
         assertThat(
                 flyway.info().current().getVersion().getVersion()
-        ).isEqualTo("3");
+        ).isEqualTo("4");
 
         assertThat(flyway.info().applied())
                 .filteredOn(migration -> migration.getVersion() != null)
-                .hasSize(3);
+                .hasSize(4);
 
         assertThat(jdbc.queryForList("""
-                SELECT table_name FROM information_schema.tables
+                SELECT table_name
+                FROM information_schema.tables
                 WHERE table_schema = 'app'
                   AND table_type = 'BASE TABLE'
                   AND table_name <> 'flyway_schema_history'
@@ -81,7 +82,8 @@ class PodoServerApplicationTests {
                 "quiz_questions",
                 "quiz_answers",
                 "quiz_hint_views",
-                "observations"
+                "observations",
+                "observation_images"
         );
 
         assertThat(jdbc.queryForObject("""
@@ -89,7 +91,7 @@ class PodoServerApplicationTests {
                 FROM information_schema.table_constraints
                 WHERE constraint_schema = 'app'
                   AND constraint_type = 'FOREIGN KEY'
-                """, Integer.class)).isEqualTo(20);
+                """, Integer.class)).isEqualTo(22);
 
         Flyway restartedFlyway = Flyway.configure()
                 .dataSource(dataSource)
@@ -97,12 +99,17 @@ class PodoServerApplicationTests {
                 .locations("classpath:db/migration")
                 .load();
 
-        assertThat(restartedFlyway.migrate().migrationsExecuted).isZero();
-        assertThat(restartedFlyway.info().pending()).isEmpty();
+        assertThat(
+                restartedFlyway.migrate().migrationsExecuted
+        ).isZero();
+
+        assertThat(
+                restartedFlyway.info().pending()
+        ).isEmpty();
 
         assertThat(restartedFlyway.info().applied())
                 .filteredOn(migration -> migration.getVersion() != null)
-                .hasSize(3);
+                .hasSize(4);
 
         restartedFlyway.validate();
     }
@@ -148,7 +155,9 @@ class PodoServerApplicationTests {
 
     @ParameterizedTest
     @ValueSource(strings = {"COMPLETED", "CANCELLED"})
-    void allowsANewActiveVisitAfterATerminalVisit(String terminalStatus) {
+    void allowsANewActiveVisitAfterATerminalVisit(
+            String terminalStatus
+    ) {
         UUID accountId = insertAccount();
         UUID placeId = insertPlace();
 
@@ -198,12 +207,28 @@ class PodoServerApplicationTests {
         UUID placeId = insertPlace();
         String requestKey = UUID.randomUUID().toString();
 
-        insertVisit(accountId, placeId, "CANCELLED", requestKey);
-        insertVisit(insertAccount(), placeId, "PLANNED", requestKey);
+        insertVisit(
+                accountId,
+                placeId,
+                "CANCELLED",
+                requestKey
+        );
+
+        insertVisit(
+                insertAccount(),
+                placeId,
+                "PLANNED",
+                requestKey
+        );
 
         assertSqlState(
                 "23505",
-                () -> insertVisit(accountId, placeId, "PLANNED", requestKey)
+                () -> insertVisit(
+                        accountId,
+                        placeId,
+                        "PLANNED",
+                        requestKey
+                )
         );
     }
 
@@ -234,10 +259,18 @@ class PodoServerApplicationTests {
 
         jdbc.update("""
                 INSERT INTO app.accounts (
-                    id, kakao_subject, status, created_at, updated_at
+                    id,
+                    kakao_subject,
+                    status,
+                    created_at,
+                    updated_at
                 )
                 VALUES (
-                    ?, ?, 'ACTIVE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                    ?,
+                    ?,
+                    'ACTIVE',
+                    CURRENT_TIMESTAMP,
+                    CURRENT_TIMESTAMP
                 )
                 """, id, id.toString());
 
@@ -249,10 +282,18 @@ class PodoServerApplicationTests {
 
         jdbc.update("""
                 INSERT INTO app.places (
-                    id, name, environment, status, updated_at
+                    id,
+                    name,
+                    environment,
+                    status,
+                    updated_at
                 )
                 VALUES (
-                    ?, 'Test place', 'UNKNOWN', 'DRAFT', CURRENT_TIMESTAMP
+                    ?,
+                    'Test place',
+                    'UNKNOWN',
+                    'DRAFT',
+                    CURRENT_TIMESTAMP
                 )
                 """, id);
 
@@ -268,7 +309,12 @@ class PodoServerApplicationTests {
 
         jdbc.update(
                 """
-                INSERT INTO app.quiz_sets (id, place_id, version, status)
+                INSERT INTO app.quiz_sets (
+                    id,
+                    place_id,
+                    version,
+                    status
+                )
                 VALUES (?, ?, ?, ?)
                 """,
                 id,
@@ -310,15 +356,36 @@ class PodoServerApplicationTests {
 
         jdbc.update("""
                 INSERT INTO app.visits (
-                    id, account_id, place_id, planned_date,
-                    source, status, quiz_set_id,
-                    create_request_key, create_request_hash,
-                    reported_at, completed_at, cancelled_at,
-                    created_at, updated_at
+                    id,
+                    account_id,
+                    place_id,
+                    planned_date,
+                    source,
+                    status,
+                    quiz_set_id,
+                    create_request_key,
+                    create_request_hash,
+                    reported_at,
+                    completed_at,
+                    cancelled_at,
+                    created_at,
+                    updated_at
                 )
                 VALUES (
-                    ?, ?, ?, CURRENT_DATE, 'MAP', ?, ?, ?,
-                    'test-request-hash', ?, ?, ?, ?, ?
+                    ?,
+                    ?,
+                    ?,
+                    CURRENT_DATE,
+                    'MAP',
+                    ?,
+                    ?,
+                    ?,
+                    'test-request-hash',
+                    ?,
+                    ?,
+                    ?,
+                    ?,
+                    ?
                 )
                 """,
                 id,
@@ -350,7 +417,8 @@ class PodoServerApplicationTests {
                 .isInstanceOf(SQLException.class);
 
         assertThat(
-                ((SQLException) exception.getMostSpecificCause()).getSQLState()
+                ((SQLException) exception.getMostSpecificCause())
+                        .getSQLState()
         ).isEqualTo(expectedState);
     }
 }
