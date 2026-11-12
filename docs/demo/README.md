@@ -8,7 +8,7 @@
 
 1. [Figma wireframe](https://www.figma.com/design/lWZGGaQay5Wcp7wKw6YEze/?node-id=143-1611)을 제품 기준으로 본다. 이전 PRD와 현재 코드가 디자인과 다르면 검토할 변경으로 기록한다. 오래된 와이어프레임·보류 화면은 자동으로 구현 범위에 포함하지 않는다.
 2. [담당 및 제외 범위](ownership.md)에서 작업 주체를 확인한다. 이번 논의에서 진행한 작업과 담당이 애매한 항목은 `SeokH-dev`가 맡는다.
-3. [B: 장소·추천·인기](b-place-recommendation.md), [C: 방문·퀴즈·기록](c-visit-quiz-records.md)에서 본인 영역을 검토한다.
+3. [C: 방문·퀴즈·기록](c-visit-quiz-records.md)에서 C 영역을 검토한다. B 장소·추천·인기 상세 가이드는 리뷰 담당을 분리한 후속 PR로 추가한다.
 4. 리뷰에서 계약과 데이터 의미를 정한 뒤 구현 PR을 만든다. 제안 필드명·경로는 리뷰 전 계약으로 사용하지 않는다.
 
 ## 이번 논의의 확정 경계
