@@ -4,7 +4,7 @@
 
 **Goal:** Figma 마이페이지의 회원탈퇴를 연결하여 즉시 이용 차단 후 카카오 연결과 모든 개인 데이터를 영속 작업으로 삭제한다.
 
-**Architecture:** 인증된 DELETE에서 계정을 WITHDRAWING으로 전환하고 모든 세션 폐기와 정리 작업 생성을 한 트랜잭션으로 처리한다. 스케줄 작업자가 카카오 unlink, 개인 DB 정리, 파일 삭제를 재시도하고 전 단계 완료 뒤 계정을 삭제한다. 프론트는 202를 접수로 안내한다.
+**Architecture:** 인증된 DELETE에서 계정을 WITHDRAWING으로 전환하고 모든 세션 폐기와 정리 작업 생성을 한 트랜잭션으로 처리한다. 스케줄 작업자가 카카오 unlink, 개인 DB 정리, 파일 삭제를 재시도하고 전 단계 완료 뒤 계정을 삭제한다. 202의 접수 의미를 서버 계약 문서로 안내한다.
 
 **Tech Stack:** Java 21, Spring Boot, PostgreSQL/Flyway, RestClient, Testcontainers; 기존 React/TypeScript·React Query 프론트.
 
@@ -20,7 +20,7 @@
 - 영속 재시도는 최대 간격 30분, 일시 실패 횟수 초과로 작업 유실 금지. 키 미설정은 접수 전 503.
 - 새 의존성·관리자 API·상태 대시보드·알림·복구 기능을 추가하지 않음. API 키 원문을 로그·문서·프론트에 넣지 않음.
 - 적용된 마이그레이션은 수정하지 않음. 구현 직전 dev의 최신 버전 확인 후 V5가 비어 있으면 V5 사용.
-- 서버/클라이언트는 별도 브랜치·별도 PR. 본 계획은 회원탈퇴만 포함하며 도서·사진 퀴즈 연동은 후속 작업.
+- 서버 전용 브랜치·PR로 진행한다. 프론트는 다른 담당자 영역으로 변경 금지. 도서·사진 퀴즈는 별도 후속 작업.
 
 ## Review Focus
 
@@ -40,7 +40,7 @@
 - `WithdrawalCleanup.prepare(UUID accountId, UUID leaseToken) -> void`: 파일 큐 확보와 개인 DB 참조 제거를 원자 처리. `deleteFiles(UUID accountId, UUID leaseToken) -> boolean`, `finish(UUID accountId, UUID leaseToken) -> void`.
 - `WithdrawalWorker.runOnce() -> void`: 한 건 점유→현재 단계 실행→결과 기록. `Clock` 주입, 외부 호출은 트랜잭션 밖. 오래된 점유 결과는 반영하지 않음.
 - Controller는 기존 `AuthController`에 DELETE를 추가해 private 인증 경계 helper를 재사용한다. 응답 record `WithdrawalResponse(String status)` 추가.
-- 클라이언트 루트 `CLIENT`는 `/Users/seokamoto/Documents/잡동 프로젝트/용용톤/_workspace/kakao-login-review-20261111/PODO-client`로 식별한 저장소다. 실행 전 깨끗한 별도 브랜치에서 작업하며 다른 미완료 checkout은 수정하지 않는다.
+- 프론트 저장소는 다른 담당자 영역이므로 읽기 근거 외 수정하지 않는다. 서버 연동 가이드만 제공한다.
 
 ---
 
@@ -48,7 +48,7 @@
 
 **Files:** 새 `V5__account_withdrawal.sql`(번호 재확인), `auth/withdrawal/WithdrawalRepository.java`; 수정 `auth/domain/Account.java`, `auth/repository/AccountRepository.java`, `AuthSessionRepository.java`, `AuthTokenRepository.java`, `auth/service/AuthSessionService.java`, `global/exception/ErrorCode.java`; 테스트 `auth/withdrawal/WithdrawalIntegrationTests.java`, 기존 `auth/AuthIntegrationTests.java`.
 
-**Interfaces:** Account.beginWithdrawal(Instant now), AuthSessionService.revokeAllForAccount(UUID accountId), repository Claim/claim은 위 정의 사용. 계정은 마지막 삭제 전까지 kakao_subject UNIQUE 유지.
+**Interfaces:** Account.beginWithdrawal(), AuthSessionService.revokeAllForAccount(UUID accountId), repository Claim/claim은 위 정의 사용. 계정은 마지막 삭제 전까지 kakao_subject UNIQUE 유지.
 
 - [ ] 테스트 `withdrawalBlocksAllSessionsAndRejoin`: 접수용 서비스 동작을 repository/트랜잭션 수준으로 시험. ACTIVE→WITHDRAWING, 두 세션 모두 폐기, 작업 수 1, 로그인·refresh 실패를 assert한다. `concurrentRefreshAndWithdrawalCannotReviveSession`은 latch로 경합시키고 유효 세션 0·교착 없음 assert. 이 단계는 HTTP를 노출하지 않는다.
 - [ ] `./gradlew test --tests '*WithdrawalIntegrationTests' --tests '*AuthIntegrationTests'` 실행하여 새 기능 부재로 실패하는지 확인한다. Docker/Java 오류는 기능 RED로 세지 않는다.
@@ -88,17 +88,16 @@
 - [ ] 테스트 RED 후 service/controller/worker를 연결한다. 한 트랜잭션에서 차단·전 세션 폐기·작업 생성. 재시도 횟수로 영구 유실하지 않고 비밀값 없는 분류 오류만 남긴다. Swagger에 202/401/403/503과 접수 의미를 문서화한다.
 - [ ] 관련 테스트 PASS 후 전체 `./gradlew test` 실행. `./gradlew test --tests '*SwaggerConfigurationTests'`가 새 응답·schema를 포함하는지 확인. 자기 데이터 전 삭제·공용 보존·완료 후 새 UUID 재가입까지 한 통합 테스트로 확인하고 커밋한다.
 
-### Task 5: Figma 탈퇴 버튼 연결과 데모 검증
+### Task 5: 서버 계약 문서와 최종 검증
 
-**Files (CLIENT):** 수정 `src/api/auth.ts`, `src/api/queries.ts`(필요한 hook만), `src/pages/MyPage.tsx`, `src/pages/Login.tsx`, `src/pages/AuthCallback.tsx`, `src/api/schema.d.ts`, `docs/openapi.json`, `docs/api-integration.md`. 새 테스트 프레임워크를 설치하지 않는다.
+**범위 정정 (사용자 지시, 2026-11-13):** 프론트는 다른 담당자의 영역이다. 프론트 저장소·코드·타입 생성물·브랜치에 추가 작업하지 않는다. Figma 버튼과 서버 API의 관계는 서버 연동 가이드로만 전달한다.
 
-**Interfaces:** auth.withdrawAccount(): Promise<void>는 202를 검증한 뒤 세션·CSRF를 정리한다. 기존 clearSession 경로에 session generation을 두어 접수 이전에 시작한 refresh 응답이 나중에 도착해 토큰을 복구하지 못하게 한다. 기존 로그인 메시지로 PROCESSING/ACCOUNT_WITHDRAWING을 표시한다.
+**Files:** 서버 README와 `docs/api/account-withdrawal.md`, 관련 Swagger 검증 및 기존 서버 테스트. 프론트 파일 변경 없음.
 
-- [ ] 브라우저 스텁으로 탈퇴 202/503/401/응답 유실 및 지연 refresh 케이스를 먼저 재현하고 현재 버튼/처리 부재를 확인한다. 네트워크 요청은 승인된 테스트 환경 또는 로컬 스텁만 사용한다.
-- [ ] 기존 마이페이지의 탈퇴 UI를 연결한다. Figma 밖 새 화면을 만들지 않고 취소 시 요청 0, 중복 클릭 시 요청 1을 보장한다. 202 이후 개인 Query cache와 이미지 object URL 정리, signedOut 전환, 접수 문구 표시. 503/네트워크 실패는 완료 안내 금지. 진행 중 callback 메시지와 기존 로그인 실패 메시지를 구분한다.
-- [ ] 로컬 서버 OpenAPI로 `npm run api:pull` 및 `npm run api:types` 실행 후 생성된 계약 diff를 확인한다. `npm run build` PASS. 스텁 재현에서 token/cache 부활 없음, 타 계정 새 로그인 시 이전 사진/기록 없음 확인 후 frontend 커밋한다.
-- [ ] 서버 전체 테스트 PASS와 프론트 build PASS를 기록한다. 실제 키·unlink 권한이 준비된 경우에만 삭제를 허용한 테스트 계정으로 접수→전 기기 차단→정리→재가입을 확인한다. 키가 없으면 실환경 미검증이라고 남기고 성공을 주장하지 않는다.
-- [ ] fresh reviewer가 서버/클라이언트 diff와 승인 설계의 범위·삭제·인증·재시도를 대조한다. 중요 지적 수정 후 서버/클라이언트 PR을 각각 dev/main 기준으로 생성한다. 실제 base는 당시 원격 정책을 확인하며 자동 병합·배포하지 않는다.
+- [ ] 서버 전체 `./gradlew test`와 Swagger 계약 테스트를 실행하고 결과를 기록한다.
+- [ ] 연동 가이드에 DELETE /api/me의 Bearer·Origin·CSRF·세션 요구사항, 202 PROCESSING과 접수/완료 차이, 오류·재가입 정책, 프론트 담당자가 정리할 개인 캐시·늦은 refresh 주의점을 기록한다. 프론트 구현 완료를 주장하지 않는다.
+- [ ] 카카오 Admin Key가 준비되어 있고 삭제를 허용한 테스트 계정이 있는 경우에만 실제 unlink를 검증한다. 없으면 스텁 검증 범위와 실환경 미검증을 명시한다.
+- [ ] fresh reviewer가 서버 전체 diff를 설계와 대조한다. 중요 지적을 수정하고 서버 전용 feature/account-withdrawal 브랜치의 PR을 준비한다. 자동 병합·배포하지 않는다.
 
 ## 자체 검토
 
