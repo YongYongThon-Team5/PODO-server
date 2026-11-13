@@ -97,6 +97,8 @@ B·C의 Controller에서는 `@AuthenticationPrincipal AuthenticatedAccount`의 `
 
 ## 회원탈퇴 서버 설정
 
+상세 요청·오류·클라이언트 연동 조건은 [회원탈퇴 API 연동 가이드](docs/api/account-withdrawal.md)를 참조한다.
+
 `DELETE /api/me`는 본문·쿼리 없이 Bearer, 정확한 `Origin`, 현재 세션의 CSRF 쿠키·`X-CSRF-Token`으로 요청한다. 유효한 Refresh 쿠키가 함께 오면 Bearer와 같은 세션이어야 한다. 접수 트랜잭션에서 계정을 차단하고 모든 기기의 세션·토큰을 폐기한다. 응답은 `202 {"status":"PROCESSING"}`, `Cache-Control: no-store`이며 Refresh·CSRF 쿠키를 만료시킨다. 이 응답은 삭제 접수를 뜻한다.
 
 `KAKAO_ADMIN_KEY`가 없거나 탈퇴 설정이 유효하지 않으면 변경 전에 `503 SERVICE_UNAVAILABLE`로 거절한다. 기존 로그인·공개 API의 기동은 유지한다. 기본 설정은 HTTP 연결 5초·응답 15초, 작업 점유 5분, 확인 주기 5초다. `podo.auth.withdrawal`의 `connect-timeout`, `request-timeout`, `poll-interval`로 조정할 수 있으며, `lease-duration`은 현재 저장소 계약상 `5m`이어야 한다. `worker-enabled=false`는 자동 실행만 멈추고 영속 작업을 유지하므로 테스트·작업자 분리 시에만 사용한다.
