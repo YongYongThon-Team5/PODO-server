@@ -43,6 +43,8 @@ class AuthSessionServiceTest {
     @BeforeEach
     void activeAccount() {
         when(accounts.findById(accountId)).thenReturn(Optional.of(new Account(accountId, "kakao-subject", "ACTIVE")));
+        when(accounts.findLockedById(accountId)).thenReturn(Optional.of(new Account(accountId, "kakao-subject", "ACTIVE")));
+        when(sessions.findAccountIdById(sessionId)).thenReturn(Optional.of(accountId));
     }
 
     @Test
@@ -136,7 +138,7 @@ class AuthSessionServiceTest {
 
     @Test
     void repeatedKakaoLoginCreatesSeparate14DaySessionsWithRefreshOnly() {
-        when(accounts.findByKakaoSubject("kakao-subject"))
+        when(accounts.findLockedByKakaoSubject("kakao-subject"))
                 .thenReturn(Optional.of(new Account(accountId, "kakao-subject", "ACTIVE")));
         AuthSessionService.LoginSession first = service.issueForKakaoSubject("kakao-subject");
         AuthSessionService.LoginSession second = service.issueForKakaoSubject("kakao-subject");

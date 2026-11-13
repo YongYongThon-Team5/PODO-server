@@ -39,9 +39,14 @@ public class AuthSessionService {
         Instant now = clock.instant();
         // PostgreSQL arbitrates concurrent first logins without aborting this transaction.
         accounts.insertIfAbsent(UUID.randomUUID(), subject, now);
-        Account account = accounts.findByKakaoSubject(subject)
+        Account account = accounts.findLockedByKakaoSubject(subject)
                 .orElseThrow(() -> new BusinessException(ErrorCode.INTERNAL_ERROR));
-        requireActiveAccount(account.getId(), ErrorCode.INVALID_TOKEN);
+        if (account.isWithdrawing()) {
+            throw new BusinessException(ErrorCode.ACCOUNT_WITHDRAWING);
+        }
+        if (!account.isActive()) {
+            throw new BusinessException(ErrorCode.INVALID_TOKEN);
+        }
 
         UUID sessionId = UUID.randomUUID();
         Instant expiresAt = now.plus(SESSION_LIFETIME);
@@ -89,12 +94,14 @@ public class AuthSessionService {
         String hash = checkedHash(rawRefresh, ErrorCode.REFRESH_TOKEN_INVALID);
         UUID sessionId = tokens.findSessionIdByTokenHash(hash)
                 .orElseThrow(() -> new BusinessException(ErrorCode.REFRESH_TOKEN_INVALID));
-        // Lock the session before loading token state, serializing refresh and logout.
+        // All mutating auth paths serialize on account, then session. Scalar lookups avoid stale entities.
+        UUID accountId = sessions.findAccountIdById(sessionId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.REFRESH_TOKEN_INVALID));
+        requireLockedActiveAccount(accountId, ErrorCode.REFRESH_TOKEN_INVALID);
         AuthSession session = sessions.findLockedById(sessionId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.REFRESH_TOKEN_INVALID));
         Instant now = clock.instant();
         requireActiveSession(session, now, ErrorCode.REFRESH_TOKEN_INVALID);
-        requireActiveAccount(session.getAccountId(), ErrorCode.REFRESH_TOKEN_INVALID);
         AuthToken oldRefresh = tokens.findById(hash)
                 .orElseThrow(() -> new BusinessException(ErrorCode.REFRESH_TOKEN_INVALID));
         requireUsableRefresh(oldRefresh, now);
@@ -116,13 +123,33 @@ public class AuthSessionService {
         if (sessionId == null) {
             throw new BusinessException(ErrorCode.INVALID_TOKEN);
         }
+        UUID accountId = sessions.findAccountIdById(sessionId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.INVALID_TOKEN));
+        requireLockedActiveAccount(accountId, ErrorCode.INVALID_TOKEN);
         AuthSession session = sessions.findLockedById(sessionId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.INVALID_TOKEN));
         Instant now = clock.instant();
         requireActiveSession(session, now, ErrorCode.INVALID_TOKEN);
-        requireActiveAccount(session.getAccountId(), ErrorCode.INVALID_TOKEN);
         session.revoke(now);
         tokens.revokeForSession(sessionId, now);
+    }
+
+    @Transactional
+    public void revokeAllForAccount(UUID accountId) {
+        // Also callable after beginWithdrawal in the caller's acceptance transaction.
+        accounts.findLockedById(accountId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.INVALID_TOKEN));
+        Instant now = clock.instant();
+        // Match retired-session cleanup's token-before-session order. The account lock
+        // already excludes login, refresh and logout for this account.
+        tokens.revokeForAccount(accountId, now);
+        sessions.revokeForAccount(accountId, now);
+    }
+
+    private void requireLockedActiveAccount(UUID accountId, ErrorCode error) {
+        if (accounts.findLockedById(accountId).filter(Account::isActive).isEmpty()) {
+            throw new BusinessException(error);
+        }
     }
 
     private static String checkedHash(String raw, ErrorCode error) {

@@ -108,10 +108,10 @@ class VisitMigrationTests {
                 .defaultSchema("app")
                 .load();
 
-        // V2 다음에는 V3와 V4 두 개가 적용된다.
+        // V2 다음에는 V3, V4, V5 세 개가 적용된다.
         assertThat(
                 latest.migrate().migrationsExecuted
-        ).isEqualTo(2);
+        ).isEqualTo(3);
 
         latest.validate();
 
