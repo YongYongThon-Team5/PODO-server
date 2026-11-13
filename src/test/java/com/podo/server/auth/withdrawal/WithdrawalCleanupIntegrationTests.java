@@ -7,6 +7,7 @@ import com.podo.server.observation.repository.ObservationJobRepository;
 import com.podo.server.observation.service.ObservationGenerationTransactions;
 import com.podo.server.observation.storage.ObservationStorage;
 import com.podo.server.profile.image.storage.ProfileImageStorage;
+import com.podo.server.profile.image.cleanup.ProfileImageCleanup;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -81,6 +82,7 @@ class WithdrawalCleanupIntegrationTests {
     @MockitoSpyBean ProfileImageStorage profiles;
     @Autowired PlatformTransactionManager manager;
     @Autowired ObservationStorage storage;
+    @Autowired ProfileImageCleanup orphanCleanup;
     private UUID account;
     private UUID other;
     private UUID place;
@@ -148,10 +150,10 @@ class WithdrawalCleanupIntegrationTests {
         storage.write(legacyKey, new byte[]{5});
         storage.write(otherKey, new byte[]{6});
         jdbc.update("INSERT INTO app.oauth_login_requests VALUES ('owned-state', 'nonce', ?, now(), NULL)", account);
-        jdbc.update("INSERT INTO app.profile_image_deletions VALUES (?, ?, now())", image, ownedPhoto);
+        jdbc.update("INSERT INTO app.profile_image_deletions(image_id, storage_key, retry_at) VALUES (?, ?, now())", image, ownedPhoto);
         UUID unownedQueueId = UUID.randomUUID();
         String unownedQueueKey = key();
-        jdbc.update("INSERT INTO app.profile_image_deletions VALUES (?, ?, now())", unownedQueueId, unownedQueueKey);
+        jdbc.update("INSERT INTO app.profile_image_deletions(image_id, storage_key, retry_at) VALUES (?, ?, now())", unownedQueueId, unownedQueueKey);
         profiles.write(unownedQueueKey, new byte[]{9});
 
         var claim = begin();
@@ -185,11 +187,14 @@ class WithdrawalCleanupIntegrationTests {
         assertThat(Files.exists(OBSERVATION.resolve(second))).isFalse();
         assertThat(Files.exists(OBSERVATION.resolve(legacyKey))).isFalse();
         assertThat(storage.read(otherKey)).containsExactly((byte) 6);
+        assertThatThrownBy(() -> cleanup.finish(account, claim.leaseToken())).isInstanceOf(IllegalStateException.class);
+        assertThat(Files.exists(PROFILE.resolve(unownedQueueKey))).isTrue();
+        orphanCleanup.run(); // Legacy unknown-owner files drain only through the generic worker.
         cleanup.finish(account, claim.leaseToken());
         assertThat(count("accounts")).isEqualTo(1);
         assertThat(count("account_withdrawals")).isZero();
         assertThat(count("account_withdrawal_files")).isZero();
-        assertThat(Files.readAllBytes(PROFILE.resolve(unownedQueueKey))).containsExactly((byte) 9);
+        assertThat(Files.exists(PROFILE.resolve(unownedQueueKey))).isFalse();
         assertThat(count("places")).isEqualTo(1);
         assertThat(count("place_sources")).isEqualTo(1);
         assertThat(jdbc.queryForList("SELECT id FROM app.quiz_sets", UUID.class)).containsExactlyInAnyOrder(common, otherSet);
@@ -443,6 +448,55 @@ class WithdrawalCleanupIntegrationTests {
             Thread.currentThread().interrupt();
             throw new AssertionError(ex);
         }
+    }
+
+    @Test
+    void withdrawalCapturesFailedOrphanDeletionAfterMetadataIsGone() throws IOException {
+        String key = key();
+        UUID image = image(account, key);
+        jdbc.update("UPDATE app.profile_images SET orphaned_at = ? WHERE id = ?", NOW.minusSeconds(86401).atOffset(ZoneOffset.UTC), image);
+        Files.createDirectory(PROFILE.resolve(key));
+        Files.write(PROFILE.resolve(key).resolve("busy"), new byte[]{1});
+
+        orphanCleanup.run();
+        assertThat(count("profile_images")).isZero();
+        assertThat(count("profile_image_deletions")).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT account_id FROM app.profile_image_deletions WHERE image_id = ?", UUID.class, image)).isEqualTo(account);
+        var claim = begin();
+        cleanup.prepare(account, claim.leaseToken());
+        assertThat(count("account_withdrawal_files")).isEqualTo(1);
+        assertThat(count("profile_image_deletions")).isZero();
+        assertThatThrownBy(() -> cleanup.deleteFiles(account, claim.leaseToken())).isInstanceOf(RuntimeException.class);
+        assertThatThrownBy(() -> cleanup.finish(account, claim.leaseToken())).isInstanceOf(IllegalStateException.class);
+        assertThat(count("accounts")).isEqualTo(2);
+        assertThatThrownBy(() -> sessions.issueForKakaoSubject("cleanup-owned"));
+
+        Files.delete(PROFILE.resolve(key).resolve("busy"));
+        Files.delete(PROFILE.resolve(key));
+        profiles.write(key, new byte[]{7});
+        assertThat(cleanup.deleteFiles(account, claim.leaseToken())).isTrue();
+        assertThat(Files.exists(PROFILE.resolve(key))).isFalse();
+        cleanup.finish(account, claim.leaseToken());
+        assertThat(sessions.issueForKakaoSubject("cleanup-owned").accountId()).isNotEqualTo(account);
+    }
+
+    @Test
+    void legacyUnknownOwnerQueueBlocksFinishUntilGenericCleanupDrainsIt() {
+        String key = key();
+        profiles.write(key, new byte[]{1});
+        jdbc.update("INSERT INTO app.profile_image_deletions(image_id, storage_key, retry_at) VALUES (?, ?, ?)",
+                UUID.randomUUID(), key, NOW.atOffset(ZoneOffset.UTC));
+        var claim = begin();
+        cleanup.prepare(account, claim.leaseToken());
+        assertThat(count("account_withdrawal_files")).isZero();
+        assertThat(cleanup.deleteFiles(account, claim.leaseToken())).isTrue();
+        assertThatThrownBy(() -> cleanup.finish(account, claim.leaseToken())).isInstanceOf(IllegalStateException.class);
+        assertThat(count("accounts")).isEqualTo(2);
+        assertThat(Files.exists(PROFILE.resolve(key))).isTrue();
+        assertThat(count("profile_image_deletions")).isEqualTo(1);
+        orphanCleanup.run();
+        assertThat(Files.exists(PROFILE.resolve(key))).isFalse();
+        cleanup.finish(account, claim.leaseToken());
     }
 
     private WithdrawalRepository.Claim begin() {

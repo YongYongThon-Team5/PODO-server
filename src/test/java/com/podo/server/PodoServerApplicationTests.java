@@ -54,11 +54,11 @@ class PodoServerApplicationTests {
     void initializesTheDomainSchemaAndDoesNotReapplyTheMigration() {
         assertThat(
                 flyway.info().current().getVersion().getVersion()
-        ).isEqualTo("5");
+        ).isEqualTo("6");
 
         assertThat(flyway.info().applied())
                 .filteredOn(migration -> migration.getVersion() != null)
-                .hasSize(5);
+                .hasSize(6);
 
         assertThat(jdbc.queryForList("""
                 SELECT table_name
@@ -111,7 +111,7 @@ class PodoServerApplicationTests {
 
         assertThat(restartedFlyway.info().applied())
                 .filteredOn(migration -> migration.getVersion() != null)
-                .hasSize(5);
+                .hasSize(6);
 
         restartedFlyway.validate();
     }

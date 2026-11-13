@@ -59,6 +59,12 @@ public class WithdrawalCleanup {
             lock(OWNED_SETS + " ORDER BY s.id FOR UPDATE", accountId);
             // Pin image metadata before the existing orphan worker can remove its ownership association.
             lock("SELECT id FROM app.profile_images WHERE account_id = :account ORDER BY id FOR UPDATE", accountId);
+            lock("""
+                    SELECT image_id FROM app.profile_image_deletions
+                    WHERE account_id = :account OR image_id IN (
+                        SELECT id FROM app.profile_images WHERE account_id = :account
+                    ) ORDER BY image_id FOR UPDATE
+                    """, accountId);
             for (var file : ownedFiles(accountId)) {
                 int saved = jdbc.sql("""
                         INSERT INTO app.account_withdrawal_files(account_id, storage_kind, storage_key)
@@ -86,7 +92,7 @@ public class WithdrawalCleanup {
             update("DELETE FROM app.visits WHERE account_id = :account", accountId);
             update("DELETE FROM app.child_profiles WHERE account_id = :account", accountId);
             update("""
-                    DELETE FROM app.profile_image_deletions WHERE image_id IN (
+                    DELETE FROM app.profile_image_deletions WHERE account_id = :account OR image_id IN (
                         SELECT id FROM app.profile_images WHERE account_id = :account
                     )
                     """, accountId);
@@ -152,6 +158,12 @@ public class WithdrawalCleanup {
                         OR EXISTS (SELECT 1 FROM app.oauth_login_requests WHERE account_id = :account)
                     """).param("account", accountId).query(Boolean.class).single();
             if (personalRows) throw new IllegalStateException("Withdrawal personal cleanup is incomplete");
+            boolean orphanFiles = jdbc.sql("""
+                    SELECT EXISTS (SELECT 1 FROM app.profile_image_deletions
+                        WHERE account_id = :account OR account_id IS NULL)
+                    """).param("account", accountId).query(Boolean.class).single();
+            // Pre-V6 queue rows without recoverable provenance may belong to this account.
+            if (orphanFiles) throw new IllegalStateException("Withdrawal orphan file cleanup is incomplete");
             if (requireOwnership(claim) != FILES_PENDING) throw changed();
             update("DELETE FROM app.account_withdrawal_files WHERE account_id = :account", accountId);
             update("DELETE FROM app.account_withdrawals WHERE account_id = :account", accountId);
@@ -163,6 +175,11 @@ public class WithdrawalCleanup {
     private List<File> ownedFiles(UUID accountId) {
         return jdbc.sql("""
                 SELECT 'PROFILE' AS kind, storage_key FROM app.profile_images WHERE account_id = :account
+                UNION
+                SELECT 'PROFILE', storage_key FROM app.profile_image_deletions
+                WHERE account_id = :account OR image_id IN (
+                    SELECT id FROM app.profile_images WHERE account_id = :account
+                )
                 UNION
                 SELECT 'OBSERVATION', storage_key FROM app.observations WHERE id IN (%s)
                 UNION
