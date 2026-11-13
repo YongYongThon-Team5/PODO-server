@@ -7,17 +7,17 @@ import com.podo.server.auth.repository.AccountRepository;
 import com.podo.server.auth.repository.AuthSessionRepository;
 import com.podo.server.auth.repository.AuthTokenRepository;
 import com.podo.server.auth.support.OpaqueTokens;
+import com.podo.server.auth.withdrawal.WithdrawalRepository;
 import com.podo.server.global.exception.BusinessException;
 import com.podo.server.global.exception.ErrorCode;
-import lombok.RequiredArgsConstructor;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
+import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 @Service
 @RequiredArgsConstructor
@@ -30,9 +30,19 @@ public class AuthSessionService {
     private final AuthSessionRepository sessions;
     private final AuthTokenRepository tokens;
     private final Clock clock;
+    private final WithdrawalRepository withdrawals;
 
     @Transactional
     public LoginSession issueForKakaoSubject(String subject) {
+        return issue(subject, false);
+    }
+
+    @Transactional(noRollbackFor = WithdrawalLoginBlocked.class)
+    public LoginSession issueForKakaoCallbackSubject(String subject) {
+        return issue(subject, true);
+    }
+
+    private LoginSession issue(String subject, boolean providerCallback) {
         if (subject == null || subject.isBlank()) {
             throw new BusinessException(ErrorCode.INVALID_REQUEST);
         }
@@ -42,6 +52,10 @@ public class AuthSessionService {
         Account account = accounts.findLockedByKakaoSubject(subject)
                 .orElseThrow(() -> new BusinessException(ErrorCode.INTERNAL_ERROR));
         if (account.isWithdrawing()) {
+            if (providerCallback) {
+                withdrawals.rearmUnlink(account.getId(), clock.instant());
+                throw new WithdrawalLoginBlocked();
+            }
             throw new BusinessException(ErrorCode.ACCOUNT_WITHDRAWING);
         }
         if (!account.isActive()) {
@@ -176,6 +190,11 @@ public class AuthSessionService {
         if (accounts.findById(accountId).filter(Account::isActive).isEmpty()) {
             throw new BusinessException(error);
         }
+    }
+
+    // Only this deliberate denial commits the re-consent fence; other failures still roll back.
+    public static final class WithdrawalLoginBlocked extends BusinessException {
+        public WithdrawalLoginBlocked() { super(ErrorCode.ACCOUNT_WITHDRAWING); }
     }
 
     public record LoginSession(UUID accountId, UUID sessionId, String refreshToken, Instant expiresAt) {

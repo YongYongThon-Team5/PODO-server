@@ -71,6 +71,7 @@ Docker를 실행한 상태에서 아래 명령을 사용한다. Testcontainers�
 | 환경변수 | 내용 |
 |---|---|
 | `API_ORIGIN` | 프론트와 API가 함께 사용하는 HTTPS 출처. 경로나 마지막 `/` 없이 지정 |
+| `KAKAO_ADMIN_KEY` | 회원탈퇴 연결 해제 전용 서버 Admin Key. 로그인 REST 키와 별도로 설정하고 클라이언트에 전달하지 않음 |
 | `KAKAO_CLIENT_ID` | 카카오 앱의 REST API 키 |
 | `KAKAO_CLIENT_SECRET` | 카카오 앱에서 Client Secret이 활성화되어 있으면 필수 |
 | `KAKAO_REDIRECT_URI` | 카카오 앱에 등록한 콜백 주소. 기본 경로는 `/api/auth/callback/kakao` |
@@ -93,6 +94,16 @@ Access는 JWT가 아닌 43자 불투명 난수이며 30분 동안 유효하다. 
 B·C의 Controller에서는 `@AuthenticationPrincipal AuthenticatedAccount`의 `accountId()`를 사용한다. 클라이언트가 보낸 계정 ID를 소유자로 사용하지 않으며, 각 서비스에서 프로필·방문 등 리소스 소유권을 추가 확인한다. 공개 API에도 무효 Bearer를 보내면 401로 거절한다.
 
 테스트는 카카오 호출을 대체해 검증하므로 실제 키가 필요하지 않다. 실제 카카오 앱과 브라우저를 사용하는 검증은 HTTPS 주소·앱 키를 설정한 환경에서 수행한다.
+
+## 회원탈퇴 서버 설정
+
+`DELETE /api/me`는 본문·쿼리 없이 Bearer, 정확한 `Origin`, 현재 세션의 CSRF 쿠키·`X-CSRF-Token`으로 요청한다. 유효한 Refresh 쿠키가 함께 오면 Bearer와 같은 세션이어야 한다. 접수 트랜잭션에서 계정을 차단하고 모든 기기의 세션·토큰을 폐기한다. 응답은 `202 {"status":"PROCESSING"}`, `Cache-Control: no-store`이며 Refresh·CSRF 쿠키를 만료시킨다. 이 응답은 삭제 접수를 뜻한다.
+
+`KAKAO_ADMIN_KEY`가 없거나 탈퇴 설정이 유효하지 않으면 변경 전에 `503 SERVICE_UNAVAILABLE`로 거절한다. 기존 로그인·공개 API의 기동은 유지한다. 기본 설정은 HTTP 연결 5초·응답 15초, 작업 점유 5분, 확인 주기 5초다. `podo.auth.withdrawal`의 `connect-timeout`, `request-timeout`, `poll-interval`로 조정할 수 있으며, `lease-duration`은 현재 저장소 계약상 `5m`이어야 한다. `worker-enabled=false`는 자동 실행만 멈추고 영속 작업을 유지하므로 테스트·작업자 분리 시에만 사용한다.
+
+작업자는 카카오 연결 해제 확인 → 개인 DB 정리 및 파일 큐 확보 → 파일 삭제 → 계정 최종 삭제 순으로 처리한다. 재시작·점유 만료 후 재개하며 실패 간격은 30초부터 두 배로 늘려 최대 30분이다. 인증·설정 오류도 작업을 버리지 않고 분류 코드와 횟수만 기록한다. 설정을 고치면 다음 재시도에서 이어간다. 소유자를 복원할 수 없는 기존 파일 큐가 남으면 계정을 보수적으로 유지하므로 해당 큐의 저장소 오류를 해결해야 한다.
+
+탈퇴 처리 중 검증된 카카오 콜백은 고정 실패 URI에 `error=ACCOUNT_WITHDRAWING`을 붙여 반환한다. 이때 재동의로 카카오 연결이 다시 생길 수 있으므로 진행 중 점유를 무효화하고 연결 해제를 다시 요구한다. 모든 삭제가 끝난 뒤 같은 카카오 사용자로 로그인하면 새 UUID를 발급한다. 실환경 연결 해제는 삭제를 허용한 테스트 계정에서 별도로 검증해야 하며, 자동 테스트는 공급자 스텁과 로컬 PostgreSQL·파일만 사용한다.
 
 ## 프로필 선택 목록
 

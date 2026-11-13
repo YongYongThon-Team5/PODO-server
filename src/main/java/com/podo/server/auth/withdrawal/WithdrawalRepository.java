@@ -88,6 +88,34 @@ public class WithdrawalRepository {
                 .update() == 1;
     }
 
+    public Optional<String> subject(Claim claim, Instant now) {
+        return jdbc.sql("""
+                SELECT account.kakao_subject FROM app.accounts account
+                JOIN app.account_withdrawals job ON job.account_id = account.id
+                WHERE job.account_id = :account AND job.lease_token = :token
+                  AND job.lease_expires_at > :now AND account.status = 'WITHDRAWING'
+                """).param("account", claim.accountId()).param("token", claim.leaseToken())
+                .param("now", now.atOffset(ZoneOffset.UTC)).query(String.class).optional();
+    }
+
+    public Optional<Long> attemptCount(Claim claim, Instant now) {
+        return jdbc.sql("""
+                SELECT attempt_count FROM app.account_withdrawals
+                WHERE account_id = :account AND lease_token = :token AND lease_expires_at > :now
+                """).param("account", claim.accountId()).param("token", claim.leaseToken())
+                .param("now", now.atOffset(ZoneOffset.UTC)).query(Long.class).optional();
+    }
+
+    // Caller holds the account lock: re-consent must invalidate every in-flight cleanup lease.
+    public void rearmUnlink(UUID accountId, Instant now) {
+        int changed = jdbc.sql("""
+                UPDATE app.account_withdrawals SET stage = 'UNLINK_PENDING', lease_token = NULL,
+                    lease_expires_at = NULL, retry_at = :now, error_code = NULL
+                WHERE account_id = :account
+                """).param("account", accountId).param("now", now.atOffset(ZoneOffset.UTC)).update();
+        if (changed != 1) throw new IllegalStateException("Withdrawal job is missing");
+    }
+
     public enum Stage { UNLINK_PENDING, CLEANUP_PENDING, FILES_PENDING }
     public record Claim(UUID accountId, UUID leaseToken) { }
 }

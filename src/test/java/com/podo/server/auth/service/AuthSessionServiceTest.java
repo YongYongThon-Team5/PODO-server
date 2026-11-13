@@ -7,18 +7,18 @@ import com.podo.server.auth.repository.AccountRepository;
 import com.podo.server.auth.repository.AuthSessionRepository;
 import com.podo.server.auth.repository.AuthTokenRepository;
 import com.podo.server.auth.support.OpaqueTokens;
+import com.podo.server.auth.withdrawal.WithdrawalRepository;
 import com.podo.server.global.exception.BusinessException;
 import com.podo.server.global.exception.ErrorCode;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentCaptor;
-
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.Optional;
 import java.util.UUID;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -38,7 +38,7 @@ class AuthSessionServiceTest {
     private final String rawRefresh = OpaqueTokens.newToken();
     private final String refreshHash = OpaqueTokens.hash(rawRefresh);
     private final AuthSessionService service = new AuthSessionService(
-            accounts, sessions, tokens, Clock.fixed(NOW, ZoneOffset.UTC));
+            accounts, sessions, tokens, Clock.fixed(NOW, ZoneOffset.UTC), mock(WithdrawalRepository.class));
 
     @BeforeEach
     void activeAccount() {

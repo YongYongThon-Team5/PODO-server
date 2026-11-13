@@ -1,13 +1,18 @@
 package com.podo.server.auth.withdrawal;
 
+import com.podo.server.auth.csrf.CsrfService;
+import com.podo.server.auth.kakao.KakaoClient;
 import com.podo.server.auth.repository.AccountRepository;
 import com.podo.server.auth.repository.AuthSessionRepository;
 import com.podo.server.auth.repository.AuthTokenRepository;
 import com.podo.server.auth.service.AuthSessionService;
+import com.podo.server.auth.service.OAuthLoginStateService;
 import com.podo.server.global.exception.BusinessException;
 import com.podo.server.global.exception.ErrorCode;
-import java.time.Instant;
+import jakarta.servlet.http.Cookie;
+import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.Callable;
@@ -20,11 +25,17 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -34,8 +45,24 @@ import static com.podo.server.auth.withdrawal.WithdrawalRepository.Stage.*;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-@SpringBootTest
+@SpringBootTest(properties = {
+        "podo.auth.withdrawal.worker-enabled=false",
+        "podo.auth.api-origin=https://podo.test",
+        "podo.auth.success-redirect-uri=https://podo.test/auth/success",
+        "podo.auth.failure-redirect-uri=https://podo.test/auth/error",
+        "podo.auth.csrf-signing-key=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+})
+@AutoConfigureMockMvc
 @Testcontainers
 class WithdrawalIntegrationTests {
     private static final Instant NOW = Instant.parse("2026-11-13T00:00:00Z");
@@ -49,17 +76,173 @@ class WithdrawalIntegrationTests {
         registry.add("spring.datasource.password", POSTGRES::getPassword);
     }
 
+    @Autowired MockMvc mvc;
+    @Autowired CsrfService csrf;
+    @MockitoBean KakaoUnlinkClient unlink;
+    @MockitoBean KakaoClient kakao;
+    @Autowired OAuthLoginStateService states;
     @Autowired JdbcTemplate jdbc;
     @Autowired AccountRepository accounts;
     @Autowired AuthSessionService sessions;
     @Autowired AuthTokenRepository tokenRepository;
     @Autowired AuthSessionRepository sessionRepository;
-    @Autowired WithdrawalRepository jobs;
+    @MockitoSpyBean WithdrawalRepository jobs;
+    @Autowired WithdrawalService withdrawal;
+    @Autowired WithdrawalWorker worker;
+    @Autowired Clock clock;
+    @Autowired WithdrawalCleanup cleanup;
     @Autowired PlatformTransactionManager manager;
 
     @BeforeEach
     void reset() {
         jdbc.execute("TRUNCATE app.accounts CASCADE");
+        when(unlink.ready()).thenReturn(true);
+    }
+
+    @Test
+    void deleteAcceptsAtomicallyClearsCookiesAndRevokesEveryDevice() throws Exception {
+        var login = sessions.issueForKakaoSubject("123456");
+        var second = sessions.issueForKakaoSubject("123456");
+        var pair = sessions.rotateRefresh(login.refreshToken());
+        var response = mvc.perform(withdrawRequest(pair.accessToken(), login.sessionId()))
+                .andExpect(status().isAccepted())
+                .andReturn().getResponse();
+        assertThat(response.getContentAsString()).isEqualTo("{\"status\":\"PROCESSING\"}");
+        assertThat(response.getHeader("Cache-Control")).isEqualTo("no-store");
+        assertThat(response.getHeaders("Set-Cookie")).hasSize(2).allSatisfy(cookie ->
+                assertThat(cookie).contains("Max-Age=0", "Secure", "HttpOnly", "Path=/"));
+        assertThat(accounts.findById(login.accountId()).orElseThrow().isWithdrawing()).isTrue();
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM app.account_withdrawals", Integer.class)).isEqualTo(1);
+        assertError(() -> sessions.authenticateAccess(pair.accessToken()), ErrorCode.INVALID_TOKEN);
+        assertError(() -> sessions.authenticateRefresh(second.refreshToken()), ErrorCode.REFRESH_TOKEN_INVALID);
+        mvc.perform(withdrawRequest(pair.accessToken(), login.sessionId()))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void deleteRejectsInvalidBoundariesAndMissingConfigurationWithoutMutation() throws Exception {
+        var login = sessions.issueForKakaoSubject("123456");
+        var pair = sessions.rotateRefresh(login.refreshToken());
+        mvc.perform(delete("/api/me"))
+                .andExpect(status().isUnauthorized());
+        mvc.perform(withdrawRequest(pair.accessToken(), login.sessionId()).header("Origin", "https://evil.test"))
+                .andExpect(status().isForbidden());
+        mvc.perform(withdrawRequest(pair.accessToken(), login.sessionId()).header("X-CSRF-Token", "invalid"))
+                .andExpect(status().isForbidden());
+        mvc.perform(withdrawRequest(pair.accessToken(), login.sessionId()).content("{}"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(withdrawRequest(pair.accessToken(), login.sessionId()).param("accountId", UUID.randomUUID().toString()))
+                .andExpect(status().isBadRequest());
+        var other = sessions.issueForKakaoSubject("987654");
+        mvc.perform(withdrawRequest(pair.accessToken(), login.sessionId())
+                .cookie(new Cookie("__Host-refresh", other.refreshToken())))
+                .andExpect(status().isConflict());
+        when(unlink.ready()).thenReturn(false);
+        var response = mvc.perform(withdrawRequest(pair.accessToken(), login.sessionId()))
+                .andExpect(status().isServiceUnavailable())
+                .andReturn().getResponse();
+        assertThat(response.getContentAsString()).contains("SERVICE_UNAVAILABLE").doesNotContain("123456");
+        assertThat(accounts.findById(login.accountId()).orElseThrow().isActive()).isTrue();
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM app.account_withdrawals", Integer.class)).isZero();
+        assertThat(sessions.authenticateAccess(pair.accessToken()).accountId()).isEqualTo(login.accountId());
+    }
+
+    @Test
+    void validatedBlockedCallbackRearmsUnlinkAndInvalidatesTheOldLease() throws Exception {
+        var login = sessions.issueForKakaoSubject("123456");
+        withdraw(login.accountId());
+        var old = jobs.claim(Instant.now()).orElseThrow();
+        assertThat(jobs.advance(old, UNLINK_PENDING, CLEANUP_PENDING, Instant.now())).isTrue();
+        assertThat(jobs.advance(old, CLEANUP_PENDING, FILES_PENDING, Instant.now())).isTrue();
+        var challenge = states.issue();
+        when(kakao.fetchSubject("valid-code")).thenReturn("123456");
+        var response = mvc.perform(get("/api/auth/callback/kakao")
+                .param("state", challenge.state()).param("code", "valid-code")
+                .cookie(new Cookie("__Host-oauth-state", challenge.browserNonce())))
+                .andExpect(status().isFound())
+                .andReturn().getResponse();
+        assertThat(response.getHeader("Location")).isEqualTo("https://podo.test/auth/error?error=ACCOUNT_WITHDRAWING");
+        assertThat(jobs.stage(old, Instant.now())).isEmpty();
+        assertThat(jdbc.queryForObject("SELECT stage FROM app.account_withdrawals WHERE account_id = ?", String.class, login.accountId()))
+                .isEqualTo("UNLINK_PENDING");
+        assertNoUsableSessionsOrTokens();
+        assertThatThrownBy(() -> cleanup.finish(login.accountId(), old.leaseToken())).isInstanceOf(IllegalStateException.class);
+        assertThat(accounts.findById(login.accountId())).isPresent();
+    }
+
+    @Test
+    void unavailableAndUntrustedCallbacksUseOnlyConfiguredFailureUri() throws Exception {
+        var challenge = states.issue();
+        when(kakao.fetchSubject("unavailable")).thenThrow(new BusinessException(ErrorCode.SERVICE_UNAVAILABLE));
+        var response = mvc.perform(get("/api/auth/callback/kakao")
+                .param("state", challenge.state()).param("code", "unavailable")
+                .cookie(new Cookie("__Host-oauth-state", challenge.browserNonce())))
+                .andExpect(status().isFound()).andReturn().getResponse();
+        assertThat(response.getHeader("Location")).isEqualTo("https://podo.test/auth/error");
+        var untrusted = mvc.perform(get("/api/auth/callback/kakao")
+                .param("redirect_uri", "https://evil.test").param("error", "ACCOUNT_WITHDRAWING"))
+                .andExpect(status().isFound()).andReturn().getResponse();
+        assertThat(untrusted.getHeader("Location")).isEqualTo("https://podo.test/auth/error");
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM app.accounts", Integer.class)).isZero();
+    }
+
+    private MockHttpServletRequestBuilder withdrawRequest(String access, UUID session) {
+        String value = csrf.issue(session);
+        return delete("/api/me")
+                .header("Authorization", "Bearer " + access).header("Origin", "https://podo.test")
+                .header("X-CSRF-Token", value).cookie(new Cookie("__Host-csrf", value));
+    }
+
+    @Test
+    void acceptanceDatabaseFailureRollsBackTheActualService() {
+        var login = sessions.issueForKakaoSubject("123456");
+        var pair = sessions.rotateRefresh(login.refreshToken());
+        doThrow(new IllegalStateException("simulated failure"))
+                .when(jobs).enqueue(eq(login.accountId()), any());
+        assertThatThrownBy(() -> withdrawal.request(login.accountId())).hasRootCauseInstanceOf(IllegalStateException.class);
+        assertThat(accounts.findById(login.accountId()).orElseThrow().isActive()).isTrue();
+        assertThat(sessions.authenticateAccess(pair.accessToken()).accountId()).isEqualTo(login.accountId());
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM app.account_withdrawals", Integer.class)).isZero();
+    }
+
+    @Test
+    void providerSuccessBeforeLostDatabaseRecordRetriesAfterWorkerRestartWithoutAmbientTransaction() {
+        var login = sessions.issueForKakaoSubject("123456");
+        withdrawal.request(login.accountId());
+        when(unlink.unlink("123456")).thenAnswer(call -> {
+            assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+            return UnlinkResult.CONFIRMED;
+        });
+        doThrow(new IllegalStateException("lost write"))
+                .doCallRealMethod().when(jobs).advance(any(),
+                        eq(UNLINK_PENDING), eq(CLEANUP_PENDING),
+                        any());
+        tx().executeWithoutResult(status -> worker.runOnce());
+        assertThat(jdbc.queryForObject("SELECT stage FROM app.account_withdrawals", String.class)).isEqualTo("UNLINK_PENDING");
+        assertThat(jdbc.queryForObject("SELECT attempt_count FROM app.account_withdrawals", Long.class)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT error_code FROM app.account_withdrawals", String.class)).isEqualTo("CLEANUP_FAILED");
+        jdbc.update("UPDATE app.account_withdrawals SET retry_at = now() - interval '1 second'");
+        new WithdrawalWorker(jobs, unlink, cleanup, clock, new WithdrawalProperties("", "5s", "15s", "5m", "5s")).runOnce();
+        verify(unlink, times(2)).unlink("123456");
+        assertThat(accounts.findById(login.accountId())).isEmpty();
+        assertThat(sessions.issueForKakaoSubject("123456").accountId()).isNotEqualTo(login.accountId());
+    }
+
+    @Test
+    void callbackReconsentDuringUnlinkPreventsStaleWorkerFinalizing() throws Exception {
+        var login = sessions.issueForKakaoSubject("123456");
+        withdrawal.request(login.accountId());
+        when(unlink.unlink("123456")).thenAnswer(call -> {
+            assertError(() -> sessions.issueForKakaoCallbackSubject("123456"), ErrorCode.ACCOUNT_WITHDRAWING);
+            return UnlinkResult.CONFIRMED;
+        });
+        worker.runOnce();
+        assertThat(accounts.findById(login.accountId())).isPresent();
+        assertThat(jdbc.queryForObject("SELECT stage FROM app.account_withdrawals", String.class)).isEqualTo("UNLINK_PENDING");
+        assertThat(jdbc.queryForObject("SELECT lease_token FROM app.account_withdrawals", UUID.class)).isNull();
+        when(unlink.unlink("123456")).thenReturn(UnlinkResult.CONFIRMED);
+        worker.runOnce();
+        assertThat(accounts.findById(login.accountId())).isEmpty();
     }
 
     @Test

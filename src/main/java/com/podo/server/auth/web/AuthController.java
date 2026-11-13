@@ -6,11 +6,15 @@ import com.podo.server.auth.kakao.KakaoClient;
 import com.podo.server.auth.service.AuthSessionService;
 import com.podo.server.auth.service.AuthenticatedAccount;
 import com.podo.server.auth.service.OAuthLoginStateService;
+import com.podo.server.auth.withdrawal.WithdrawalService;
 import com.podo.server.global.exception.BusinessException;
 import com.podo.server.global.exception.ErrorCode;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.enums.ParameterIn;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletRequest;
@@ -23,10 +27,12 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.util.MultiValueMap;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.util.UriComponentsBuilder;
 
 @RestController
 @Tag(name = "인증")
@@ -37,15 +43,17 @@ public class AuthController {
     private final KakaoClient kakao;
     private final CsrfService csrf;
     private final Clock clock;
+    private final WithdrawalService withdrawals;
 
     public AuthController(AuthProperties properties, AuthSessionService sessions, OAuthLoginStateService states,
-            KakaoClient kakao, CsrfService csrf, Clock clock) {
+            KakaoClient kakao, CsrfService csrf, Clock clock, WithdrawalService withdrawals) {
         this.properties = properties;
         this.sessions = sessions;
         this.states = states;
         this.kakao = kakao;
         this.csrf = csrf;
         this.clock = clock;
+        this.withdrawals = withdrawals;
     }
 
     @Operation(summary = "CSRF 토큰 조회", description = "선택 Bearer 또는 Refresh 세션에 결합한다. 둘 다 없으면 익명 토큰을 발급한다.")
@@ -88,6 +96,7 @@ public class AuthController {
         AuthCookies.clear(headers, AuthCookies.OAUTH_STATE);
         AuthCookies.clear(headers, AuthCookies.CSRF);
         boolean success = false;
+        boolean withdrawing = false;
         try {
             requireEmptyBody(request);
             Set<String> allowed = Set.of("state", "code", "error", "error_description");
@@ -101,16 +110,22 @@ public class AuthController {
             String code = params.getFirst("code");
             if (!params.containsKey("error") && code != null && !code.isBlank()) {
                 properties.redirect(true);
-                var session = sessions.issueForKakaoSubject(kakao.fetchSubject(code));
+                var session = sessions.issueForKakaoCallbackSubject(kakao.fetchSubject(code));
                 states.linkAccount(state, session.accountId());
                 AuthCookies.set(headers, AuthCookies.REFRESH, session.refreshToken(),
                         Duration.between(clock.instant(), session.expiresAt()));
                 success = true;
             }
         } catch (BusinessException ex) {
-            // A failed callback always returns to the configured page without provider details or tokens.
+            // Only a fixed safe code escapes; provider errors and arbitrary targets remain private.
+            withdrawing = ex.getErrorCode() == ErrorCode.ACCOUNT_WITHDRAWING;
         }
-        headers.setLocation(properties.redirect(success));
+        var redirect = properties.redirect(success);
+        if (withdrawing) {
+            redirect = UriComponentsBuilder.fromUri(redirect)
+                    .replaceQueryParam("error", "ACCOUNT_WITHDRAWING").build().toUri();
+        }
+        headers.setLocation(redirect);
         return ResponseEntity.status(302).headers(headers).build();
     }
 
@@ -154,6 +169,31 @@ public class AuthController {
         AuthCookies.clear(headers, AuthCookies.REFRESH);
         AuthCookies.clear(headers, AuthCookies.CSRF);
         return ResponseEntity.noContent().headers(headers).build();
+    }
+
+    @Operation(summary = "회원탈퇴 접수", description = "전체 세션을 폐기하고 영속 삭제 작업을 접수한다. 202는 삭제 완료가 아닌 PROCESSING 상태다. 본문·쿼리 없이 요청한다.",
+            parameters = @Parameter(name = "X-CSRF-Token", in = ParameterIn.HEADER, required = true),
+            responses = {
+                @ApiResponse(responseCode = "202", description = "탈퇴 접수 (처리 중)",
+                    content = @Content(mediaType = "application/json", schema = @Schema(implementation = WithdrawalResponse.class))),
+                @ApiResponse(responseCode = "401", description = "인증 실패", content = @Content),
+                @ApiResponse(responseCode = "403", description = "Origin 또는 CSRF 검증 실패", content = @Content),
+                @ApiResponse(responseCode = "503", description = "탈퇴 서버 설정 미준비 (변경 없음)", content = @Content)
+            })
+    @SecurityRequirement(name = "BearerAuth")
+    @DeleteMapping("/api/me")
+    public ResponseEntity<WithdrawalResponse> withdraw(HttpServletRequest request,
+            @AuthenticationPrincipal AuthenticatedAccount access) throws IOException {
+        requireOrigin(request);
+        if (access == null) throw new BusinessException(ErrorCode.AUTHENTICATION_REQUIRED);
+        requireSameSession(access, refreshIdentity(request, true));
+        verifyCsrf(request, access.sessionId());
+        requireEmptyRequest(request);
+        withdrawals.request(access.accountId());
+        HttpHeaders headers = headers();
+        AuthCookies.clear(headers, AuthCookies.REFRESH);
+        AuthCookies.clear(headers, AuthCookies.CSRF);
+        return ResponseEntity.accepted().headers(headers).body(new WithdrawalResponse("PROCESSING"));
     }
 
     @Operation(summary = "내 계정 조회")
@@ -225,4 +265,5 @@ public class AuthController {
     public record CsrfResponse(String csrfToken) { }
     public record TokenResponse(String accessToken, String tokenType, int expiresIn, UUID accountId) { }
     public record Me(UUID accountId) { }
+    public record WithdrawalResponse(@Schema(allowableValues = "PROCESSING") String status) { }
 }

@@ -6,8 +6,8 @@ import com.podo.server.observation.domain.ObservationData.Lease;
 import com.podo.server.observation.repository.ObservationJobRepository;
 import com.podo.server.observation.service.ObservationGenerationTransactions;
 import com.podo.server.observation.storage.ObservationStorage;
-import com.podo.server.profile.image.storage.ProfileImageStorage;
 import com.podo.server.profile.image.cleanup.ProfileImageCleanup;
+import com.podo.server.profile.image.storage.ProfileImageStorage;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -25,10 +25,11 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -41,8 +42,9 @@ import static com.podo.server.auth.withdrawal.WithdrawalRepository.Stage.*;
 import static org.assertj.core.api.Assertions.*;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.when;
 
-@SpringBootTest(properties = "podo.observation.worker-enabled=false")
+@SpringBootTest(properties = {"podo.observation.worker-enabled=false", "podo.auth.withdrawal.worker-enabled=false"})
 @Testcontainers
 class WithdrawalCleanupIntegrationTests {
     private static final Instant NOW = Instant.parse("2026-11-14T00:00:00Z");
@@ -74,6 +76,9 @@ class WithdrawalCleanupIntegrationTests {
 
     @Autowired JdbcTemplate jdbc;
     @Autowired WithdrawalCleanup cleanup;
+    @Autowired WithdrawalService withdrawal;
+    @Autowired WithdrawalWorker worker;
+    @MockitoBean KakaoUnlinkClient unlink;
     @Autowired WithdrawalRepository withdrawals;
     @Autowired AuthSessionService sessions;
     @Autowired MutableClock clock;
@@ -104,6 +109,47 @@ class WithdrawalCleanupIntegrationTests {
                 INSERT INTO app.place_sources(id, place_id, source_type, fact_text, checked_at, status)
                 VALUES (?, ?, 'OFFICIAL', '이 전시관에서는 용인의 역사와 문화를 소개합니다.', now(), 'ACTIVE')
                 """, source, place);
+    }
+
+    @Test
+    void acceptedWorkerDeletesAllPrivateTypesPreservesSharedDataAndRejoinsWithNewUuid() throws IOException {
+        when(unlink.ready()).thenReturn(true);
+        when(unlink.unlink("cleanup-owned")).thenAnswer(call -> {
+            assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+            return UnlinkResult.CONFIRMED;
+        });
+        String photo = key();
+        child(account, image(account, photo), "BLUE");
+        profiles.write(photo, new byte[]{1});
+        UUID ownedVisit = visit(account);
+        UUID otherVisit = visit(other);
+        UUID shared = quiz(null, 1);
+        UUID sharedQuestion = question(shared, null);
+        answer(ownedVisit, sharedQuestion);
+        answer(otherVisit, sharedQuestion);
+        String observationKey = key();
+        UUID observation = observation(ownedVisit, observationKey);
+        UUID observationImage = observationImage(observation, observationKey, 1);
+        UUID personal = quiz(observation, 1);
+        answer(ownedVisit, question(personal, observationImage));
+        attachSet(ownedVisit, personal);
+        storage.write(observationKey, new byte[]{2});
+        jdbc.update("INSERT INTO app.oauth_login_requests VALUES ('worker-state', 'nonce', ?, now(), NULL)", account);
+        withdrawal.request(account);
+        new TransactionTemplate(manager).executeWithoutResult(status -> worker.runOnce());
+        assertThat(jdbc.queryForList("SELECT id FROM app.accounts", UUID.class)).containsExactly(other);
+        for (String table : List.of("account_withdrawals", "account_withdrawal_files", "child_profiles", "profile_images",
+                "observations", "observation_images", "oauth_login_requests")) assertThat(count(table)).as(table).isZero();
+        assertThat(count("visits")).isEqualTo(1);
+        assertThat(count("quiz_answers")).isEqualTo(1);
+        assertThat(count("quiz_hint_views")).isEqualTo(1);
+        assertThat(jdbc.queryForList("SELECT id FROM app.quiz_sets", UUID.class)).containsExactly(shared);
+        assertThat(count("quiz_questions")).isEqualTo(1);
+        assertThat(count("places")).isEqualTo(1);
+        assertThat(count("place_sources")).isEqualTo(1);
+        assertThat(Files.exists(PROFILE.resolve(photo))).isFalse();
+        assertThat(Files.exists(OBSERVATION.resolve(observationKey))).isFalse();
+        assertThat(sessions.issueForKakaoSubject("cleanup-owned").accountId()).isNotEqualTo(account);
     }
 
     @Test
