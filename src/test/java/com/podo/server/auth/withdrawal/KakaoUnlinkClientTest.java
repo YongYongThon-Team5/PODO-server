@@ -198,6 +198,21 @@ class KakaoUnlinkClientTest {
     }
 
     @Test
+    void validBoundDurationsStillEnableWithdrawal() {
+        new ApplicationContextRunner().withUserConfiguration(AuthConfiguration.class)
+                .withPropertyValues("podo.auth.withdrawal.admin-key=" + TEST_KEY,
+                        "podo.auth.withdrawal.connect-timeout=PT5S",
+                        "podo.auth.withdrawal.request-timeout=15s",
+                        "podo.auth.withdrawal.lease-duration=300000",
+                        "podo.auth.withdrawal.poll-interval=5s")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    var properties = context.getBean(WithdrawalProperties.class);
+                    assertThat(new KakaoUnlinkClient(properties).ready()).isTrue();
+                });
+    }
+
+    @Test
     void invalidWithdrawalTimingDoesNotBlockExistingLoginStartup() {
         new ApplicationContextRunner().withUserConfiguration(AuthConfiguration.class)
                 .withPropertyValues("podo.auth.withdrawal.admin-key=" + TEST_KEY,
@@ -206,6 +221,23 @@ class KakaoUnlinkClientTest {
                     assertThat(context).hasNotFailed();
                     var properties = context.getBean(WithdrawalProperties.class);
                     assertThat(new KakaoUnlinkClient(properties).ready()).isFalse();
+                });
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"connect-timeout", "request-timeout", "lease-duration", "poll-interval"})
+    void malformedWithdrawalDurationDoesNotBlockExistingLoginStartup(String setting) {
+        new ApplicationContextRunner().withUserConfiguration(AuthConfiguration.class)
+                .withPropertyValues("podo.auth.withdrawal.admin-key=" + TEST_KEY,
+                        "podo.auth.withdrawal." + setting + "=invalid")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    var properties = context.getBean(WithdrawalProperties.class);
+                    var disabledClient = new KakaoUnlinkClient(properties);
+                    assertThat(disabledClient.ready()).isFalse();
+                    var failure = assertThrows(KakaoUnlinkClient.UnlinkFailure.class,
+                            () -> disabledClient.unlink("123"));
+                    assertThat(failure.code()).isEqualTo(KakaoUnlinkClient.FailureCode.NOT_CONFIGURED);
                 });
     }
 
