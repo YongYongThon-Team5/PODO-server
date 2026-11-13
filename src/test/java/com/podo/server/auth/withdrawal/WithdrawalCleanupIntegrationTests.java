@@ -1,6 +1,14 @@
 package com.podo.server.auth.withdrawal;
 
 import com.podo.server.auth.service.AuthSessionService;
+import com.podo.server.auth.service.OAuthLoginStateService;
+import com.podo.server.auth.support.OpaqueTokens;
+import com.podo.server.global.exception.BusinessException;
+import com.podo.server.global.exception.ErrorCode;
+import com.podo.server.profile.image.service.ProfileImageService;
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayOutputStream;
+import javax.imageio.ImageIO;
 import com.podo.server.observation.ai.ObservationAi.*;
 import com.podo.server.observation.domain.ObservationData.Lease;
 import com.podo.server.observation.repository.ObservationJobRepository;
@@ -18,6 +26,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -81,6 +90,8 @@ class WithdrawalCleanupIntegrationTests {
     @MockitoBean KakaoUnlinkClient unlink;
     @Autowired WithdrawalRepository withdrawals;
     @Autowired AuthSessionService sessions;
+    @Autowired ProfileImageService images;
+    @Autowired OAuthLoginStateService states;
     @Autowired MutableClock clock;
     @Autowired ObservationGenerationTransactions generation;
     @Autowired ObservationJobRepository observations;
@@ -109,6 +120,118 @@ class WithdrawalCleanupIntegrationTests {
                 INSERT INTO app.place_sources(id, place_id, source_type, fact_text, checked_at, status)
                 VALUES (?, ?, 'OFFICIAL', '이 전시관에서는 용인의 역사와 문화를 소개합니다.', now(), 'ACTIVE')
                 """, source, place);
+    }
+
+    @Test
+    void uploadWaitsForAccountLockAndRejectsCommittedWithdrawal() throws Exception {
+        byte[] photo = png();
+        assertLateWriteWaitsForWithdrawal(() -> images.upload(account, photo, "image/png"), ErrorCode.INVALID_TOKEN, null);
+        assertThat(count("profile_images")).isZero();
+    }
+
+    @Test
+    void oauthLinkWaitsForAccountBeforeRequestAndRejectsCommittedWithdrawal() throws Exception {
+        var challenge = consumedChallenge();
+        assertLateWriteWaitsForWithdrawal(() -> states.linkAccount(challenge.state(), account), ErrorCode.INVALID_REQUEST, challenge.state());
+        assertThat(jdbc.queryForObject("SELECT account_id FROM app.oauth_login_requests", UUID.class)).isNull();
+    }
+
+    @Test
+    void authenticatedLateUploadCannotRecreateFilesAfterPrepareAndFinishImmediately() throws Exception {
+        var login = sessions.issueForKakaoSubject("cleanup-owned");
+        var tokens = sessions.rotateRefresh(login.refreshToken());
+        var authenticated = sessions.authenticateAccess(tokens.accessToken());
+        byte[] photo = png();
+        var claim = begin();
+        cleanup.prepare(account, claim.leaseToken());
+        assertThat(withdrawals.stage(claim, NOW)).contains(FILES_PENDING);
+        List<Path> filesBefore;
+        try (var files = Files.list(PROFILE)) { filesBefore = files.toList(); }
+
+        assertThatThrownBy(() -> images.upload(authenticated.accountId(), photo, "image/png"))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.INVALID_TOKEN));
+        assertThat(count("profile_images")).isZero();
+        try (var files = Files.list(PROFILE)) { assertThat(files.toList()).containsExactlyInAnyOrderElementsOf(filesBefore); }
+        assertThat(cleanup.deleteFiles(account, claim.leaseToken())).isTrue();
+        cleanup.finish(account, claim.leaseToken());
+        assertThat(count("account_withdrawals")).isZero();
+        assertThat(jdbc.queryForList("SELECT id FROM app.accounts", UUID.class)).containsExactly(other);
+        assertThat(clock.instant()).isEqualTo(NOW);
+    }
+
+    @Test
+    void issuedSessionLateOauthLinkCannotRecreateOwnershipAfterPrepareAndFinishImmediately() {
+        var challenge = consumedChallenge();
+        var login = sessions.issueForKakaoCallbackSubject("cleanup-owned");
+        var claim = begin();
+        cleanup.prepare(account, claim.leaseToken());
+        assertThat(withdrawals.stage(claim, NOW)).contains(FILES_PENDING);
+
+        assertThatThrownBy(() -> states.linkAccount(challenge.state(), login.accountId()))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.INVALID_REQUEST));
+        assertThat(jdbc.queryForObject("SELECT account_id FROM app.oauth_login_requests", UUID.class)).isNull();
+        assertThat(cleanup.deleteFiles(account, claim.leaseToken())).isTrue();
+        cleanup.finish(account, claim.leaseToken());
+        assertThat(count("account_withdrawals")).isZero();
+        assertThat(jdbc.queryForList("SELECT id FROM app.accounts", UUID.class)).containsExactly(other);
+        assertThat(clock.instant()).isEqualTo(NOW);
+    }
+
+    private OAuthLoginStateService.LoginChallenge consumedChallenge() {
+        var challenge = states.issue();
+        states.consume(challenge.state(), challenge.browserNonce());
+        return challenge;
+    }
+
+    private void assertLateWriteWaitsForWithdrawal(Runnable write, ErrorCode expected, String oauthState) throws Exception {
+        when(unlink.ready()).thenReturn(true);
+        var locked = new CountDownLatch(1);
+        var release = new CountDownLatch(1);
+        var writerPid = new AtomicInteger();
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            var acceptance = executor.submit(() -> new TransactionTemplate(manager).executeWithoutResult(status -> {
+                jdbc.queryForObject("SELECT id FROM app.accounts WHERE id = ? FOR UPDATE", UUID.class, account);
+                locked.countDown();
+                await(release);
+                withdrawal.request(account);
+            }));
+            assertThat(locked.await(10, TimeUnit.SECONDS)).isTrue();
+            var writer = executor.submit(() -> {
+                try {
+                    new TransactionTemplate(manager).executeWithoutResult(status -> {
+                        writerPid.set(jdbc.queryForObject("SELECT pg_backend_pid()", Integer.class));
+                        write.run();
+                    });
+                    return null;
+                } catch (BusinessException ex) { return ex.getErrorCode(); }
+            });
+            try {
+                long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+                boolean waiting;
+                do {
+                    waiting = Boolean.TRUE.equals(jdbc.queryForObject(
+                            "SELECT cardinality(pg_blocking_pids(?)) > 0", Boolean.class, writerPid.get()));
+                    if (!waiting) Thread.sleep(20);
+                } while (!waiting && System.nanoTime() < deadline);
+                assertThat(waiting).as("late write waits for the account transaction").isTrue();
+                if (oauthState != null) {
+                    // The waiting linker must not hold the request before obtaining the account.
+                    String hash = OpaqueTokens.hash(oauthState);
+                    assertThat(jdbc.queryForObject("SELECT state_hash FROM app.oauth_login_requests WHERE state_hash = ? FOR UPDATE NOWAIT",
+                            String.class, hash)).isEqualTo(hash);
+                }
+            } finally { release.countDown(); }
+            acceptance.get(10, TimeUnit.SECONDS);
+            assertThat(writer.get(10, TimeUnit.SECONDS)).isEqualTo(expected);
+        } finally { release.countDown(); }
+    }
+
+    private static byte[] png() throws IOException {
+        var bytes = new ByteArrayOutputStream();
+        ImageIO.write(new BufferedImage(2, 2, BufferedImage.TYPE_INT_RGB), "png", bytes);
+        return bytes.toByteArray();
     }
 
     @Test
