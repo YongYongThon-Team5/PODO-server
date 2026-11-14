@@ -130,3 +130,7 @@ B·C의 Controller에서는 `@AuthenticationPrincipal AuthenticatedAccount`의 `
 - 사진은 JPEG, PNG, WebP를 받는다. 이미지의 가로와 세로는 각각 최대 16,384픽셀까지 허용한다. 방향을 보정하고 메타데이터를 제거해 저장한다. WebP는 JPEG 또는 PNG로 변환하며 응답의 `contentType`은 저장된 형식이다.
 - `GET /api/profile-images/{imageId}`는 사진을 업로드한 계정에 이미지 바이트를 반환한다. 프론트는 Bearer를 포함해 요청하고 받은 이미지로 표시한다.
 - 사진 파일은 `PODO_PROFILE_IMAGE_DIRECTORY`(로컬 기본값 `./var/profile-images`)에 저장한다. 최초 업로드 또는 마지막 연결 해제부터 24시간이 지난 사진은 시간 단위로 정리하고, 파일 삭제에 실패하면 재시도한다.
+
+## 관찰 사진
+
+방문 사진 업로드의 `images`·`files` 필드, 인증·중복 요청 키와 재전송 규칙은 [관찰 사진 업로드 계약](docs/api/observation-upload.md)을 참고한다.

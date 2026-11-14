@@ -23,6 +23,7 @@ import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.request.MockMultipartHttpServletRequestBuilder;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
@@ -228,6 +229,69 @@ class ObservationIntegrationTests {
                         jsonPath("$.error.code")
                                 .value("IDEMPOTENCY_KEY_REUSED")
                 );
+    }
+
+    @Test
+    void imagesAliasAcceptsFrontendPhotosAndSharesIdempotencyWithFiles() throws Exception {
+        String key = UUID.randomUUID().toString();
+        State first = upload(key, 3, "images");
+        assertThat(first.images()).hasSize(3);
+        assertThat(upload(key, 3, "files").id()).isEqualTo(first.id());
+        assertThat(jdbc.queryForObject(
+                "SELECT count(*) FROM app.observations", Integer.class
+        )).isEqualTo(1);
+    }
+
+    @Test
+    void rejectsMixedAliasesUnknownFieldsTextQueryAndInvalidPhotoCounts() throws Exception {
+        for (String alias : List.of("files", "images")) {
+            invalid(multipart(path()).file(photo(alias)).file(photo(alias.equals("files") ? "images" : "files")));
+            invalid(multipart(path()).file(photo(alias)).file(photo("unknown")));
+            invalid(multipart(path()).file(photo(alias)).param("caption", "text"));
+            invalid(multipart(path() + "?extra=value").file(photo(alias)));
+            invalid(multipart(path()).file(photo(alias)).file(photo(alias)).file(photo(alias)).file(photo(alias)));
+        }
+        invalid(multipart(path()));
+        invalid(multipart(path()).file(photo("unknown")));
+        assertThat(jdbc.queryForObject(
+                "SELECT count(*) FROM app.observations", Integer.class
+        )).isZero();
+    }
+
+    @Test
+    void bothAliasesKeepTheFiveMebibytePerPhotoLimit() throws Exception {
+        for (String alias : List.of("files", "images")) {
+            mvc.perform(multipart(path())
+                            .file(new MockMultipartFile(alias, "large.png", "image/png", new byte[5 * 1024 * 1024 + 1]))
+                            .header("Authorization", "Bearer " + token)
+                            .header("Idempotency-Key", UUID.randomUUID().toString()))
+                    .andExpect(status().isPayloadTooLarge())
+                    .andExpect(jsonPath("$.error.code").value("UPLOAD_TOO_LARGE"));
+        }
+    }
+
+    @Test
+    void bothAliasesKeepImageContentAndIdempotencyKeyValidation() throws Exception {
+        for (String alias : List.of("files", "images")) {
+            mvc.perform(multipart(path())
+                            .file(new MockMultipartFile(alias, "empty.png", "image/png", new byte[0]))
+                            .header("Authorization", "Bearer " + token)
+                            .header("Idempotency-Key", UUID.randomUUID().toString()))
+                    .andExpect(status().isUnsupportedMediaType())
+                    .andExpect(jsonPath("$.error.code").value("UNSUPPORTED_IMAGE_TYPE"));
+            mvc.perform(multipart(path()).file(photo(alias))
+                            .header("Authorization", "Bearer " + token))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.error.code").value("INVALID_REQUEST"));
+        }
+    }
+
+    private void invalid(MockMultipartHttpServletRequestBuilder request)
+            throws Exception {
+        mvc.perform(request.header("Authorization", "Bearer " + token)
+                        .header("Idempotency-Key", UUID.randomUUID().toString()))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error.code").value("INVALID_REQUEST"));
     }
 
     @Test
@@ -443,6 +507,10 @@ class ObservationIntegrationTests {
 
     private State upload(String key, int count)
             throws Exception {
+        return upload(key, count, "files");
+    }
+
+    private State upload(String key, int count, String alias) throws Exception {
         var request = multipart(path())
                 .header(
                         "Authorization",
@@ -451,7 +519,7 @@ class ObservationIntegrationTests {
                 .header("Idempotency-Key", key);
 
         for (int i = 0; i < count; i++) {
-            request.file(photo());
+            request.file(photo(alias));
         }
 
         byte[] body = mvc.perform(request)
@@ -464,6 +532,10 @@ class ObservationIntegrationTests {
     }
 
     private MockMultipartFile photo() throws Exception {
+        return photo("files");
+    }
+
+    private MockMultipartFile photo(String alias) throws Exception {
         var output = new ByteArrayOutputStream();
 
         ImageIO.write(
@@ -477,7 +549,7 @@ class ObservationIntegrationTests {
         );
 
         return new MockMultipartFile(
-                "files",
+                alias,
                 "photo.png",
                 "image/png",
                 output.toByteArray()

@@ -8,6 +8,10 @@ import com.podo.server.observation.service.ObservationService;
 import com.podo.server.profile.image.processing.ProfileImageProcessor;
 import com.podo.server.visit.input.VisitInput;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.media.ArraySchema;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletRequest;
@@ -43,16 +47,40 @@ public class ObservationController {
     ) {
     }
 
+    @Schema(additionalProperties = Schema.AdditionalPropertiesValue.FALSE)
+    public record FilesUpload(
+            @ArraySchema(minItems = 1, maxItems = 3,
+                    arraySchema = @Schema(requiredMode = Schema.RequiredMode.REQUIRED),
+                    schema = @Schema(type = "string", format = "binary"))
+            List<org.springframework.web.multipart.MultipartFile> files
+    ) {}
+
+    @Schema(additionalProperties = Schema.AdditionalPropertiesValue.FALSE)
+    public record ImagesUpload(
+            @ArraySchema(minItems = 1, maxItems = 3,
+                    arraySchema = @Schema(requiredMode = Schema.RequiredMode.REQUIRED),
+                    schema = @Schema(type = "string", format = "binary"))
+            List<org.springframework.web.multipart.MultipartFile> images
+    ) {}
+
     @PostMapping(
             consumes = MediaType.MULTIPART_FORM_DATA_VALUE
     )
     @Operation(
             operationId = "uploadObservation",
-            summary = "관찰 사진 1~3장 업로드 및 생성 예약"
+            summary = "관찰 사진 1~3장 업로드 및 생성 예약",
+            description = "files 또는 images 중 한 이름으로만 사진 1~3장을 전송합니다. 파일당 최대 5MiB이며 추가 파일·텍스트·쿼리 필드는 허용하지 않습니다.",
+            requestBody = @io.swagger.v3.oas.annotations.parameters.RequestBody(
+                    required = true,
+                    content = @Content(mediaType = MediaType.MULTIPART_FORM_DATA_VALUE,
+                            schema = @Schema(oneOf = {FilesUpload.class, ImagesUpload.class})))
     )
     public ResponseEntity<State> upload(
             @AuthenticationPrincipal AuthenticatedAccount actor,
             @PathVariable String visitId,
+            @Parameter(required = true,
+                    description = "필수 요청 키: 영문·숫자·밑줄·하이픈 8~128자. 같은 방문의 같은 키와 동일한 순서·바이트·Content-Type은 별칭에 관계없이 기존 관찰을 반환하며 다른 내용은 409입니다.",
+                    schema = @Schema(type = "string", pattern = "[A-Za-z0-9_-]{8,128}"))
             @RequestHeader(
                     value = "Idempotency-Key",
                     required = false
@@ -64,7 +92,7 @@ public class ObservationController {
         noQuery(request);
 
         var map = request.getMultiFileMap();
-        var files = map.getOrDefault("files", List.of());
+        var files = map.getOrDefault("files", map.getOrDefault("images", List.of()));
 
         if (map.size() != 1
                 || files.isEmpty()

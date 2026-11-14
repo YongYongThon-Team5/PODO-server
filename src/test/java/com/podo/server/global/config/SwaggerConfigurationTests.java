@@ -2,6 +2,8 @@ package com.podo.server.global.config;
 
 import com.podo.server.auth.security.SecurityErrorWriter;
 import com.podo.server.auth.service.AuthSessionService;
+import com.podo.server.observation.service.ObservationService;
+import com.podo.server.observation.web.ObservationController;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -52,6 +54,34 @@ class SwaggerConfigurationTests {
                 .andExpect(jsonPath("$.paths['/internal/docs-test']").doesNotExist());
     }
 
+    @MockitoBean
+    private ObservationService observationService;
+
+    @Test
+    void observationUploadDocumentsExclusiveBinaryArraysAndRequiredIdempotency() throws Exception {
+        String upload = "$.paths['/api/visits/{visitId}/observations'].post";
+        mockMvc.perform(get("/v3/api-docs/podo"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath(upload + ".security[0].BearerAuth").isArray())
+                .andExpect(jsonPath(upload + ".parameters[?(@.name == 'Idempotency-Key')].required", hasItem(true)))
+                .andExpect(jsonPath(upload + ".requestBody.required").value(true))
+                .andExpect(jsonPath(upload + ".requestBody.content['multipart/form-data'].schema.oneOf.length()").value(2))
+                .andExpect(jsonPath("$.components.schemas.FilesUpload.required[0]").value("files"))
+                .andExpect(jsonPath("$.components.schemas.FilesUpload.additionalProperties").value(false))
+                .andExpect(jsonPath("$.components.schemas.FilesUpload.properties.files.type").value("array"))
+                .andExpect(jsonPath("$.components.schemas.FilesUpload.properties.files.minItems").value(1))
+                .andExpect(jsonPath("$.components.schemas.FilesUpload.properties.files.maxItems").value(3))
+                .andExpect(jsonPath("$.components.schemas.FilesUpload.properties.files.items.type").value("string"))
+                .andExpect(jsonPath("$.components.schemas.FilesUpload.properties.files.items.format").value("binary"))
+                .andExpect(jsonPath("$.components.schemas.ImagesUpload.required[0]").value("images"))
+                .andExpect(jsonPath("$.components.schemas.ImagesUpload.additionalProperties").value(false))
+                .andExpect(jsonPath("$.components.schemas.ImagesUpload.properties.images.type").value("array"))
+                .andExpect(jsonPath("$.components.schemas.ImagesUpload.properties.images.minItems").value(1))
+                .andExpect(jsonPath("$.components.schemas.ImagesUpload.properties.images.maxItems").value(3))
+                .andExpect(jsonPath("$.components.schemas.ImagesUpload.properties.images.items.type").value("string"))
+                .andExpect(jsonPath("$.components.schemas.ImagesUpload.properties.images.items.format").value("binary"));
+    }
+
     @Test
     void swaggerUiAndConfigurationArePublic() throws Exception {
         mockMvc.perform(get("/swagger-ui.html"))
@@ -86,7 +116,7 @@ class SwaggerConfigurationTests {
             "org.springframework.boot.hibernate.autoconfigure.HibernateJpaAutoConfiguration",
             "org.springframework.boot.data.jpa.autoconfigure.DataJpaRepositoriesAutoConfiguration"
     })
-    @Import({OpenApiConfig.class, SecurityConfig.class, SecurityErrorWriter.class, SampleController.class})
+    @Import({OpenApiConfig.class, SecurityConfig.class, SecurityErrorWriter.class, SampleController.class, ObservationController.class})
     static class TestConfiguration {
     }
 
