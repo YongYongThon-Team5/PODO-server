@@ -86,6 +86,31 @@ class YonginLibraryClientTest {
         server.verify();
     }
 
+    @Test
+    void normalizesWhitespaceInAllOutgoingSearchFields() {
+        CuratedBook padded = new CuratedBook("  무지개  \t물고기  ", "  합성   저자 ", " 합성  출판사  ", "2007");
+        server.expect(requestTo(uri("synthetic-key", BOOK)))
+                .andRespond(withSuccess(response("0", "NORMAL_CODE", 1, 100, 0, ""), MediaType.APPLICATION_JSON));
+
+        assertThat(client.search(padded).rows()).isEmpty();
+        server.verify();
+    }
+
+    @Test
+    void rejectsPositiveTotalWithEmptyFirstPageRatherThanReportingNoBooks() {
+        expect(response("0", "NORMAL_CODE", 1, 100, 1, ""));
+        assertUnavailable(() -> client.search(BOOK));
+        server.verify();
+    }
+
+    @ParameterizedTest
+    @ValueSource(ints = {2, 101})
+    void rejectsIncompleteFirstPageRatherThanReportingCompleteOrTruncatedResults(int total) {
+        expect(response("0", "NORMAL_CODE", 1, 100, total, ROW));
+        assertUnavailable(() -> client.search(BOOK));
+        server.verify();
+    }
+
     @ParameterizedTest
     @ValueSource(strings = {"{\"resultcode\":\"3\",\"resultMsg\":\"NODATA_ERROR\"}",
             "{\"resultcode\":3,\"resultMsg\":\"NODATA_ERROR\"}",
@@ -100,11 +125,11 @@ class YonginLibraryClientTest {
 
     @Test
     void reportsTruncationWithoutRequestingAnotherPage() {
-        expect(response("0", "NORMAL_CODE", 1, 100, 101, ROW));
+        expect(response("0", "NORMAL_CODE", 1, 100, 101, rows(100)));
         LibrarySearchResult result = client.search(BOOK);
         assertThat(result.totalCount()).isEqualTo(101);
         assertThat(result.truncated()).isTrue();
-        assertThat(result.rows()).hasSize(1);
+        assertThat(result.rows()).hasSize(100);
         server.verify();
     }
 
@@ -141,7 +166,7 @@ class YonginLibraryClientTest {
 
     @Test
     void rejectsMoreThanOneHundredRowsAndInconsistentTotal() {
-        expect(response("0", "NORMAL_CODE", 1, 100, 101, String.join(",", java.util.Collections.nCopies(101, ROW))));
+        expect(response("0", "NORMAL_CODE", 1, 100, 101, rows(101)));
         assertUnavailable(() -> client.search(BOOK));
         server.verify();
     }
@@ -241,6 +266,10 @@ class YonginLibraryClientTest {
                 .queryParam("pageNo", 1).queryParam("numOfRows", 100).queryParam("bk_nm", "{title}")
                 .queryParam("aut_nm", "{author}").queryParam("pblshr", "{publisher}").encode()
                 .buildAndExpand(key, book.title(), book.author(), book.publisher()).toUriString();
+    }
+
+    private static String rows(int count) {
+        return String.join(",", java.util.Collections.nCopies(count, ROW));
     }
 
     private static String response(String code, String message, int page, int size, int total, String rows) {

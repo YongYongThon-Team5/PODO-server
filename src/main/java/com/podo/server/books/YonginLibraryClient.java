@@ -1,5 +1,7 @@
 package com.podo.server.books;
 
+import static com.podo.server.books.CuratedBook.normalize;
+
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.nio.charset.StandardCharsets;
@@ -46,7 +48,7 @@ public class YonginLibraryClient {
                     .queryParam("pageNo", 1).queryParam("numOfRows", PAGE_SIZE)
                     .queryParam("bk_nm", "{title}").queryParam("aut_nm", "{author}")
                     .queryParam("pblshr", "{publisher}").encode()
-                    .buildAndExpand(key, book.title(), book.author(), book.publisher()).toUri();
+                    .buildAndExpand(key, normalize(book.title()), normalize(book.author()), normalize(book.publisher())).toUri();
             String body = restClient.get().uri(uri).accept(MediaType.APPLICATION_JSON).retrieve()
                     .onStatus(status -> !status.is2xxSuccessful(), (request, response) -> {
                         throw new ProviderUnavailableException();
@@ -86,7 +88,7 @@ public class YonginLibraryClient {
         }
         long total = number(response, "totalCount");
         JsonNode items = response.path("items");
-        if (!items.isArray() || items.size() > PAGE_SIZE || items.size() > total) {
+        if (!items.isArray() || items.size() != Math.min(total, PAGE_SIZE)) {
             throw new ProviderUnavailableException();
         }
         List<LibrarySearchResult.Row> rows = new ArrayList<>();

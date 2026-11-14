@@ -1,5 +1,7 @@
 package com.podo.server.books;
 
+import static com.podo.server.books.CuratedBook.normalize;
+
 import com.podo.server.books.PlaceBookResponse.Item;
 import com.podo.server.books.PlaceBookResponse.Warning;
 import com.podo.server.global.exception.BusinessException;
@@ -71,12 +73,6 @@ public class PlaceBookService {
                 && normalize(selected.author()).equals(normalize(row.author()))
                 && normalize(selected.publisher()).equals(normalize(row.publisher()))
                 && normalize(selected.publicationYear()).equals(normalize(row.publicationYear()));
-    }
-
-    private String normalize(String value) {
-        if (value == null) return null;
-        String normalized = value.trim().replaceAll("\\s+", " ");
-        return normalized.isEmpty() ? null : normalized;
     }
 
     private PlaceBookResponse empty(Warning warning) {

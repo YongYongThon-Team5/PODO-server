@@ -1,5 +1,6 @@
 package com.podo.server.books;
 
+import java.net.URI;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
@@ -106,6 +107,17 @@ class PlaceBookIntegrationTests {
         mvc.perform(get(path(id)).content("{}").contentType("application/json")).andExpect(status().isBadRequest());
         mvc.perform(get(path(id)).content(" ")).andExpect(status().isBadRequest());
         verifyNoInteractions(provider);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"&", "&&", "&&&"})
+    void nonemptyRawQueryIsRejectedEvenWithoutDecodedParameters(String query) throws Exception {
+        when(provider.search(book)).thenReturn(new LibrarySearchResult(List.of(), 0, false));
+        clearInvocations(properties, provider);
+        mvc.perform(get(URI.create(path(id) + "?" + query)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error.code").value("INVALID_REQUEST"));
+        verifyNoInteractions(properties, provider);
     }
 
     @Test

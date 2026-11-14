@@ -1,5 +1,7 @@
 package com.podo.server.books;
 
+import static com.podo.server.books.CuratedBook.normalize;
+
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
@@ -51,10 +53,6 @@ public record BookProperties(String apiKey, List<Recommendation> recommendations
     @Override
     public String toString() {
         return "BookProperties[apiKey=[REDACTED], recommendations=" + recommendations + "]";
-    }
-
-    private static String normalize(String value) {
-        return value.trim().replaceAll("\\s+", " ");
     }
 
     private static <T> List<T> immutable(List<T> values) {

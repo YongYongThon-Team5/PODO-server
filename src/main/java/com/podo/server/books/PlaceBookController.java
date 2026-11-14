@@ -45,7 +45,8 @@ public class PlaceBookController {
     public ResponseEntity<PlaceBookResponse> get(
             @Parameter(schema = @Schema(type = "string", format = "uuid")) @PathVariable String placeId,
             HttpServletRequest request) throws IOException {
-        if (!request.getParameterMap().isEmpty() || request.getContentLengthLong() > 0
+        if ((request.getQueryString() != null && !request.getQueryString().isEmpty())
+                || !request.getParameterMap().isEmpty() || request.getContentLengthLong() > 0
                 || request.getInputStream().read() != -1) {
             throw new BusinessException(ErrorCode.INVALID_REQUEST);
         }
