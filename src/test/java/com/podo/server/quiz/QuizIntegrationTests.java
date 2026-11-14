@@ -90,6 +90,40 @@ class QuizIntegrationTests {
         error(send(post(path("/quiz/restart")), owner), 409, "INVALID_VISIT_STATE");
     }
 
+    @Test
+    void missionGuidesAndFirstWrongAnswerSurviveReentryWithoutRevealingUnopenedHints()
+            throws Exception {
+        var quiz = prepared();
+        UUID question = quiz.questions().getFirst();
+        jdbc.update("UPDATE app.quiz_questions SET observation_guide = ? WHERE id = ?",
+                "입구 안내도를 살펴봐요.", question);
+        ok(post(path("/report")), owner);
+        JsonNode first = ok(get(path("/quiz")), owner);
+        assertThat(first.at("/questions/0/observationGuide").asText()).isEqualTo("입구 안내도를 살펴봐요.");
+        assertThat(first.toString()).doesNotContain("비공개힌트", "정답해설");
+
+        ok(hint(question, 1), owner);
+        ok(hint(question, 1), owner);
+        JsonNode wrong = ok(answer(question, "X"), owner);
+        assertThat(wrong.at("/feedback/isCorrect").asBoolean()).isFalse();
+        error(send(answer(question, "O"), owner), 409, "ANSWER_ALREADY_SUBMITTED");
+        JsonNode resumed = ok(get(path("/quiz")), owner);
+        assertThat(resumed.get("quizSetId")).isEqualTo(first.get("quizSetId"));
+        assertThat(resumed.get("visitStatus").asText()).isEqualTo("QUIZ_IN_PROGRESS");
+        assertThat(resumed.get("answeredCount").asInt()).isEqualTo(1);
+        assertThat(resumed.get("correctCount").asInt()).isZero();
+        assertThat(resumed.get("hintUsageCount").asInt()).isEqualTo(1);
+        assertThat(resumed.at("/questions/0/submittedAnswer").asText()).isEqualTo("X");
+        assertThat(resumed.at("/questions/0/observationGuide"))
+                .isEqualTo(first.at("/questions/0/observationGuide"));
+        assertThat(resumed.at("/questions/0/viewedHintSteps").toString()).isEqualTo("[1]");
+        assertThat(resumed.at("/questions/1/feedback").isNull()).isTrue();
+        assertThat(resumed.toString()).doesNotContain("비공개힌트2", "정답해설 2", "정답해설 3");
+        JsonNode duplicate = ok(answer(question, "X"), owner);
+        assertThat(duplicate.get("answeredCount").asInt()).isEqualTo(1);
+        assertThat(duplicate.get("correctCount").asInt()).isZero();
+    }
+
     @ParameterizedTest
     @ValueSource(ints = {0, 1, 2})
     void exactlyThreeQuestionsAreRequired(int count) throws Exception {

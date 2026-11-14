@@ -2,6 +2,8 @@
 
 백엔드 담당: `jinyoung02` · [담당 기준](ownership.md) · 기준 서버 `00297d0`
 
+완료일순 조회·기존 미션 응답·사진 생성 상태의 적용 계약과 호출 예시는 [C파트 서버 보완과 프론트 연결](c-backend-integration.md)을 참고한다. 아래 제품 정책 미정 항목과 구현된 서버 변경은 구분한다.
+
 현재 방문·퀴즈·완료 지도·사진 생성 API는 이미 구현되어 있다. 이 문서는 기존 계약으로 화면을 재현할 수 있는지와 확장이 필요한 경계를 검토한다. 정책과 파트가 애매한 사항은 사용자 담당으로 정한다.
 
 ## 작업 지시와 완료 기준 (2026-11-13 갱신)
@@ -101,7 +103,7 @@ C는 백엔드 개발자다. 프론트 컴포넌트 수정, API 호출 연결, �
 | 사진 표시 | 개인 사진은 Bearer 인증 조회이므로 일반 img src만 사용하지 않고 인증 fetch 후 표시 |
 | 공개 | 서버 자동 검사를 통과한 결과를 즉시 공개하도록 설정. 수동 관리자 검수 API를 추가하지 않음 |
 
-**필수 제약:** 사진만 있으면 모든 장소에서 생성되는 것은 아니다. [ObservationService](../../src/main/java/com/podo/server/observation/service/ObservationService.java)의 공식 근거 조건이 없으면 `SOURCE_NOT_READY`다. 업로드 전부터 사진을 건너뛰면 공용 공개 퀴즈를 사용할 수 있지만, 이미 업로드한 최신 작업이 실패했다면 report는 이를 기준으로 막는다. 실패 후 공용 퀴즈로 자동 전환하는 새 요구는 Figma에서 확인되지 않았으며 이번에 추가하지 않는다.
+**필수 제약:** 사진만 있으면 모든 장소에서 생성되는 것은 아니다. [ObservationService](../../src/main/java/com/podo/server/observation/service/ObservationService.java)의 사용 가능한 장소 근거 조건이 없으면 `SOURCE_NOT_READY`다. 업로드 전부터 사진을 건너뛰면 공용 공개 퀴즈를 사용할 수 있지만, 이미 업로드한 최신 작업이 실패했다면 report는 이를 기준으로 막는다. 실패 후 공용 퀴즈로 자동 전환하는 새 요구는 Figma에서 확인되지 않았으며 이번에 추가하지 않는다.
 
 **검증:** [ObservationIntegrationTests](../../src/test/java/com/podo/server/observation/ObservationIntegrationTests.java)의 업로드·멱등성·타 계정 사진 차단·기존 퀴즈 연결·구 작업 덮어쓰기 차단 기준을 유지한다. 사용자 담당 E2E는 실제 데모 장소에서 업로드 → 자동 생성·공개 → 시작 → 3문항 완료 → 지도·기록 확인까지 수행한다. 기본 설정과 실제 운영값, 모델 키 준비 여부는 구별해서 기록한다.
 

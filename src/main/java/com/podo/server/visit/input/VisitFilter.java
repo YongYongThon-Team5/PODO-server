@@ -10,8 +10,14 @@ import java.util.UUID;
 public record VisitFilter(
         List<Visit.Status> statuses,
         UUID placeId,
-        int limit
+        int limit,
+        Sort sort
 ) {
+    public enum Sort {
+        CREATED_AT_DESC,
+        COMPLETED_AT_DESC
+    }
+
     public VisitFilter {
         statuses = List.copyOf(statuses);
     }
@@ -20,6 +26,15 @@ public record VisitFilter(
             String status,
             String placeId,
             String rawLimit
+    ) {
+        return parse(status, placeId, rawLimit, null);
+    }
+
+    public static VisitFilter parse(
+            String status,
+            String placeId,
+            String rawLimit,
+            String rawSort
     ) {
         try {
             List<Visit.Status> statuses = status == null
@@ -43,10 +58,20 @@ public record VisitFilter(
                 throw invalid();
             }
 
+            Sort sort = rawSort == null
+                    ? Sort.CREATED_AT_DESC
+                    : Sort.valueOf(rawSort);
+
+            if (sort == Sort.COMPLETED_AT_DESC
+                    && !statuses.equals(List.of(Visit.Status.COMPLETED))) {
+                throw invalid();
+            }
+
             return new VisitFilter(
                     statuses,
                     placeId == null ? null : VisitInput.uuid(placeId),
-                    limit
+                    limit,
+                    sort
             );
         } catch (IllegalArgumentException ex) {
             throw invalid();
@@ -54,11 +79,15 @@ public record VisitFilter(
     }
 
     public String hash() {
-        return VisitInput.hash(
-                statuses.stream().sorted().map(Enum::name).toList()
-                        + "\n"
-                        + placeId
-        );
+        String value = statuses.stream().sorted().map(Enum::name).toList()
+                + "\n" + placeId;
+
+        // Keep existing creation-order cursors valid, including explicit default sort.
+        if (sort != Sort.CREATED_AT_DESC) {
+            value += "\n" + sort;
+        }
+
+        return VisitInput.hash(value);
     }
 
     private static BusinessException invalid() {

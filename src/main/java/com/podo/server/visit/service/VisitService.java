@@ -122,7 +122,9 @@ public class VisitService {
                 ? VisitCursor.encode(
                 accountId,
                 filter.hash(),
-                items.getLast().createdAt(),
+                filter.sort() == VisitFilter.Sort.COMPLETED_AT_DESC
+                        ? items.getLast().completedAt()
+                        : items.getLast().createdAt(),
                 items.getLast().id()
         )
                 : null;

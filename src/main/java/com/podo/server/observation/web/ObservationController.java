@@ -8,6 +8,10 @@ import com.podo.server.observation.service.ObservationService;
 import com.podo.server.profile.image.processing.ProfileImageProcessor;
 import com.podo.server.visit.input.VisitInput;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.enums.ParameterIn;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletRequest;
@@ -39,6 +43,8 @@ public class ObservationController {
             @NotNull
             @Min(1)
             @Max(3)
+            @Schema(minimum = "1", maximum = "3", requiredMode = Schema.RequiredMode.REQUIRED,
+                    description = "마지막 상태 조회의 attemptCount. 같은 실패 재전송에는 같은 값을 사용")
             Integer expectedAttempt
     ) {
     }
@@ -48,8 +54,16 @@ public class ObservationController {
     )
     @Operation(
             operationId = "uploadObservation",
-            summary = "관찰 사진 1~3장 업로드 및 생성 예약"
+            summary = "관찰 사진 1~3장 업로드 및 생성 예약",
+            description = """
+                    multipart files 1~3장, 각 최대 5MiB.
+                    같은 파일 묶음 재전송에는 같은 Idempotency-Key를 사용한다.
+                    생성은 비동기이며, 상태 조회의 startAvailable을 확인한 후 기존 report API로 시작한다.
+                    """,
+            parameters = @Parameter(name = "Idempotency-Key", in = ParameterIn.HEADER,
+                    required = true, schema = @Schema(type = "string", minLength = 8, maxLength = 128))
     )
+    @ApiResponse(responseCode = "202", description = "업로드 접수 및 현재 생성 상태", useReturnTypeSchema = true)
     public ResponseEntity<State> upload(
             @AuthenticationPrincipal AuthenticatedAccount actor,
             @PathVariable String visitId,
@@ -153,8 +167,14 @@ public class ObservationController {
     )
     @Operation(
             operationId = "retryObservation",
-            summary = "실패한 생성 작업을 현재 시도 번호로 재요청"
+            summary = "실패한 생성 작업을 현재 시도 번호로 재요청",
+            description = """
+                    retryAvailable=true일 때 조회한 attemptCount를 expectedAttempt로 전송한다.
+                    같은 시도 번호의 재전송은 새 작업을 중복 예약하지 않는다.
+                    지연된 이전 시도 요청은 현재 상태를 반환하며 더 최신 실패를 재시도하지 않는다.
+                    """
     )
+    @ApiResponse(responseCode = "202", description = "재시도 접수 또는 이미 진행된 요청의 현재 상태", useReturnTypeSchema = true)
     public ResponseEntity<State> retry(
             @AuthenticationPrincipal AuthenticatedAccount actor,
             @PathVariable String visitId,
