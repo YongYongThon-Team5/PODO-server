@@ -319,10 +319,12 @@ class WithdrawalCleanupIntegrationTests {
         storage.write(legacyKey, new byte[]{5});
         storage.write(otherKey, new byte[]{6});
         jdbc.update("INSERT INTO app.oauth_login_requests VALUES ('owned-state', 'nonce', ?, now(), NULL)", account);
-        jdbc.update("INSERT INTO app.profile_image_deletions(image_id, storage_key, retry_at) VALUES (?, ?, now())", image, ownedPhoto);
+        jdbc.update("INSERT INTO app.profile_image_deletions(image_id, storage_key, retry_at) VALUES (?, ?, ?)",
+                image, ownedPhoto, clock.instant().atOffset(ZoneOffset.UTC));
         UUID unownedQueueId = UUID.randomUUID();
         String unownedQueueKey = key();
-        jdbc.update("INSERT INTO app.profile_image_deletions(image_id, storage_key, retry_at) VALUES (?, ?, now())", unownedQueueId, unownedQueueKey);
+        jdbc.update("INSERT INTO app.profile_image_deletions(image_id, storage_key, retry_at) VALUES (?, ?, ?)",
+                unownedQueueId, unownedQueueKey, clock.instant().atOffset(ZoneOffset.UTC));
         profiles.write(unownedQueueKey, new byte[]{9});
 
         var claim = begin();
@@ -359,6 +361,7 @@ class WithdrawalCleanupIntegrationTests {
         assertThatThrownBy(() -> cleanup.finish(account, claim.leaseToken())).isInstanceOf(IllegalStateException.class);
         assertThat(Files.exists(PROFILE.resolve(unownedQueueKey))).isTrue();
         orphanCleanup.run(); // Legacy unknown-owner files drain only through the generic worker.
+        assertThat(count("profile_image_deletions")).isZero();
         cleanup.finish(account, claim.leaseToken());
         assertThat(count("accounts")).isEqualTo(1);
         assertThat(count("account_withdrawals")).isZero();
