@@ -2,6 +2,8 @@ package com.podo.server.global.config;
 
 import com.podo.server.auth.security.SecurityErrorWriter;
 import com.podo.server.auth.service.AuthSessionService;
+import com.podo.server.books.PlaceBookController;
+import com.podo.server.books.PlaceBookService;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -16,6 +18,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import static org.hamcrest.Matchers.hasItem;
+import static org.hamcrest.Matchers.contains;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -32,6 +35,9 @@ class SwaggerConfigurationTests {
     // Authentication persistence is covered by AuthIntegrationTests; this context only exercises documentation.
     @MockitoBean
     private AuthSessionService authSessionService;
+
+    @MockitoBean
+    private PlaceBookService placeBookService;
 
     @Test
     void groupedDocumentContainsOnlyApiPathsAndExplicitSecurityMetadata() throws Exception {
@@ -50,6 +56,31 @@ class SwaggerConfigurationTests {
                 .andExpect(jsonPath("$.paths['/api/profile-options'].get").exists())
                 .andExpect(jsonPath("$.paths['/api/profile-options'].get.security").doesNotExist())
                 .andExpect(jsonPath("$.paths['/internal/docs-test']").doesNotExist());
+    }
+
+    @Test
+    void booksDocumentHasPublicSecurityMetadataAndOnlySupportedBookFields() throws Exception {
+        mockMvc.perform(get("/v3/api-docs/podo"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.paths['/api/places/{placeId}/books'].get.security").isEmpty())
+                .andExpect(jsonPath("$.paths['/api/places/{placeId}/books'].get.responses['200'].content['application/json'].schema['$ref']")
+                        .value("#/components/schemas/PlaceBookResponse"))
+                .andExpect(jsonPath("$.paths['/api/places/{placeId}/books'].get.responses['400']").exists())
+                .andExpect(jsonPath("$.paths['/api/places/{placeId}/books'].get.responses['401']").exists())
+                .andExpect(jsonPath("$.paths['/api/places/{placeId}/books'].get.responses['404']").exists())
+                .andExpect(jsonPath("$.components.schemas.PlaceBookResponse.properties.checkedAt.format").value("date-time"))
+                .andExpect(jsonPath("$.components.schemas.PlaceBookResponse.properties.warnings.items.enum")
+                        .value(contains("NOT_CURATED", "PROVIDER_NOT_CONFIGURED", "PROVIDER_UNAVAILABLE",
+                                "RESULTS_TRUNCATED", "CURATED_BOOK_NOT_FOUND")))
+                .andExpect(jsonPath("$.components.schemas.PlaceBookItem.properties.title").exists())
+                .andExpect(jsonPath("$.components.schemas.PlaceBookItem.properties.publicationYear").doesNotExist())
+                .andExpect(jsonPath("$.components.schemas.PlaceBookItem.properties.author").doesNotExist())
+                .andExpect(jsonPath("$.components.schemas.PlaceBookItem.properties.publisher").doesNotExist())
+                .andExpect(jsonPath("$.components.schemas.PlaceBookItem.properties.libraries.items.type").value("string"))
+                .andExpect(jsonPath("$.components.schemas.PlaceBookItem.properties.availability").doesNotExist())
+                .andExpect(jsonPath("$.components.schemas.PlaceBookItem.properties.isbn").doesNotExist())
+                .andExpect(jsonPath("$.components.schemas.PlaceBookItem.properties.cover").doesNotExist())
+                .andExpect(jsonPath("$.components.schemas.PlaceBookItem.properties.returnDate").doesNotExist());
     }
 
     @Test
@@ -86,7 +117,7 @@ class SwaggerConfigurationTests {
             "org.springframework.boot.hibernate.autoconfigure.HibernateJpaAutoConfiguration",
             "org.springframework.boot.data.jpa.autoconfigure.DataJpaRepositoriesAutoConfiguration"
     })
-    @Import({OpenApiConfig.class, SecurityConfig.class, SecurityErrorWriter.class, SampleController.class})
+    @Import({OpenApiConfig.class, SecurityConfig.class, SecurityErrorWriter.class, SampleController.class, PlaceBookController.class})
     static class TestConfiguration {
     }
 
