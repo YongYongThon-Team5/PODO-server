@@ -54,6 +54,10 @@ public class VisitQueryRepository {
             VisitFilter filter,
             VisitCursor.Position cursor
     ) {
+        String sortColumn = filter.sort() == VisitFilter.Sort.COMPLETED_AT_DESC
+                ? "visit.completedAt"
+                : "visit.createdAt";
+
         String jpql = SELECT
                 + " where visit.accountId = :accountId"
                 + " and visit.status in :statuses";
@@ -65,17 +69,17 @@ public class VisitQueryRepository {
         if (cursor != null) {
             jpql += """
                      and (
-                         visit.createdAt < :createdAt
+                         %s < :sortTime
                          or (
-                             visit.createdAt = :createdAt
+                             %s = :sortTime
                              and visit.id < :id
                          )
                      )
-                    """;
+                    """.formatted(sortColumn, sortColumn);
         }
 
         var query = entityManager.createQuery(
-                        jpql + " order by visit.createdAt desc, visit.id desc",
+                        jpql + " order by " + sortColumn + " desc, visit.id desc",
                         Tuple.class
                 )
                 .setParameter("accountId", accountId)
@@ -87,7 +91,7 @@ public class VisitQueryRepository {
         }
 
         if (cursor != null) {
-            query.setParameter("createdAt", cursor.createdAt());
+            query.setParameter("sortTime", cursor.sortTime());
             query.setParameter("id", cursor.id());
         }
 

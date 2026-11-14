@@ -17,18 +17,19 @@ public final class VisitCursor {
 
     private VisitCursor() {}
 
-    public record Position(Instant createdAt, UUID id) {}
+    // The filter hash binds the timestamp to its creation/completion sort.
+    public record Position(Instant sortTime, UUID id) {}
 
     public static String encode(
             UUID account,
             String filterHash,
-            Instant createdAt,
+            Instant sortTime,
             UUID id
     ) {
         String payload = "visits\n1\n"
                 + account + "\n"
                 + filterHash + "\n"
-                + createdAt + "\n"
+                + sortTime + "\n"
                 + id;
 
         return Base64.getUrlEncoder()

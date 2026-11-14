@@ -44,11 +44,13 @@ public final class QuizResponses {
             @Schema(types = {"string", "null"})
             String introduction,
 
+            @Schema(minimum = "0", maximum = "3", description = "진행 중 세트에 응답한 문항 수. 정답 수와 다름")
             int answeredCount,
 
             @Schema(types = {"integer", "null"})
             Integer correctCount,
 
+            @Schema(minimum = "0", maximum = "6", description = "현재 세트에서 처음 열어본 문항·힌트 단계 수. 버튼 탭 수가 아님")
             int hintUsageCount,
             List<Question> questions,
             boolean restartAvailable
@@ -66,10 +68,11 @@ public final class QuizResponses {
     )
     public record Question(
             UUID questionId,
+            @Schema(minimum = "1", maximum = "3")
             int position,
             String text,
 
-            @Schema(types = {"string", "null"})
+            @Schema(types = {"string", "null"}, description = "사진·장소에서 살펴볼 대상을 안내하는 저장된 문구. 별도 미션 제목이 아님")
             String observationGuide,
 
             @Schema(types = {"string", "null"}, format = "uri")
