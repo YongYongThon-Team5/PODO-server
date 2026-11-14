@@ -15,7 +15,7 @@
 | 경고 | 의미 |
 |---|---|
 | NOT_CURATED | 해당 장소에 선정된 책이 없음. 목록은 빈 상태이며 외부 호출을 하지 않음 |
-| PROVIDER_NOT_CONFIGURED | 키 또는 선정 설정이 준비되지 않음 |
+| PROVIDER_NOT_CONFIGURED | 키가 없거나 선정 목록 설정이 유효하지 않음 |
 | PROVIDER_UNAVAILABLE | 외부 통신·인증·제공자 응답 등에 문제가 있어 일부 또는 전체 조회 불가 |
 | RESULTS_TRUNCATED | 해당 검색의 전체 결과가 100행보다 많음. 첫 100행에서 확인한 도서관만 포함 |
 | CURATED_BOOK_NOT_FOUND | 처리한 조회 범위에서 선정한 서지와 일치하는 책을 찾지 못함 |
