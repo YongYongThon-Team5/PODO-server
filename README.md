@@ -6,6 +6,10 @@ Java 21 · Spring Boot · PostgreSQL 17 · Flyway
 
 Figma 기준의 기존 파트 변경·보완 사항과 담당 구분은 [데모 구현 가이드](docs/demo/README.md)를 참고한다. 현재 지원 범위, 리뷰할 변경 제안, 구현 후 수용 기준을 구분해 기록한다.
 
+## 장소 관련 도서 API
+
+공개 장소의 관련 도서 조회, 경고 및 운영 설정은 [장소 관련 도서 API 연동 가이드](docs/api/place-books.md)를 참고한다.
+
 ## 로컬 실행
 
 Java 21과 Docker Compose가 필요하다. 각자 컴퓨터에서 PostgreSQL 컨테이너를 실행하고, Git으로 같은 DB 구조를 공유한다.
