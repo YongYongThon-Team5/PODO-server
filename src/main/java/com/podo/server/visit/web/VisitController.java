@@ -144,8 +144,11 @@ public class VisitController {
             operationId = "listVisits",
             summary = "내 방문 목록",
             description = """
-                    createdAt DESC, id DESC.
-                    필터를 바꾸면 커서 없이 새 조회한다.
+                    기본 정렬은 createdAt DESC, id DESC.
+                    status=COMPLETED&sort=COMPLETED_AT_DESC이면
+                    completedAt DESC, id DESC로 조회한다.
+                    필터나 정렬을 바꾸면 커서 없이 새 조회한다.
+                    기존 생성일순 커서는 그대로 사용할 수 있다.
                     """,
             parameters = {
                     @Parameter(
@@ -162,6 +165,16 @@ public class VisitController {
                             schema = @Schema(type = "string", format = "uuid")
                     ),
                     @Parameter(name = "cursor", in = ParameterIn.QUERY),
+                    @Parameter(
+                            name = "sort",
+                            in = ParameterIn.QUERY,
+                            description = "완료일순은 status=COMPLETED 단독 필터에서만 사용",
+                            schema = @Schema(
+                                    type = "string",
+                                    allowableValues = {"CREATED_AT_DESC", "COMPLETED_AT_DESC"},
+                                    defaultValue = "CREATED_AT_DESC"
+                            )
+                    ),
                     @Parameter(
                             name = "limit",
                             in = ParameterIn.QUERY,
@@ -184,13 +197,14 @@ public class VisitController {
             @AuthenticationPrincipal AuthenticatedAccount actor,
             HttpServletRequest request
     ) throws IOException {
-        requireQuery(request, Set.of("status", "placeId", "cursor", "limit"));
+        requireQuery(request, Set.of("status", "placeId", "cursor", "limit", "sort"));
         requireNoBody(request);
 
         var filter = VisitFilter.parse(
                 request.getParameter("status"),
                 request.getParameter("placeId"),
-                request.getParameter("limit")
+                request.getParameter("limit"),
+                request.getParameter("sort")
         );
 
         return response(

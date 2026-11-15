@@ -242,7 +242,55 @@ class WithdrawalIntegrationTests {
         assertThat(jdbc.queryForObject("SELECT lease_token FROM app.account_withdrawals", UUID.class)).isNull();
         when(unlink.unlink("123456")).thenReturn(UnlinkResult.CONFIRMED);
         worker.runOnce();
+        assertThat(accounts.findById(login.accountId())).isPresent();
+        Instant retryAt = jdbc.queryForObject("SELECT retry_at FROM app.account_withdrawals",
+                java.sql.Timestamp.class).toInstant();
+        new WithdrawalWorker(jobs, unlink, cleanup, Clock.fixed(retryAt, clock.getZone()),
+                new WithdrawalProperties("", "5s", "15s", "5m", "5s")).runOnce();
         assertThat(accounts.findById(login.accountId())).isEmpty();
+    }
+
+    @Test
+    void reconsentCannotOverlapUnlinkWorkersOrAllowRejoinWhileFirstCallIsRunning() throws Exception {
+        var login = sessions.issueForKakaoSubject("123456");
+        withdrawal.request(login.accountId());
+        var firstCallStarted = new CountDownLatch(1);
+        var releaseFirstCall = new CountDownLatch(1);
+        var providerCalls = new AtomicInteger();
+        when(unlink.unlink("123456")).thenAnswer(call -> {
+            if (providerCalls.incrementAndGet() == 1) {
+                firstCallStarted.countDown();
+                await(releaseFirstCall);
+            }
+            return UnlinkResult.CONFIRMED;
+        });
+        try (var executor = Executors.newSingleThreadExecutor()) {
+            var inFlight = executor.submit(worker::runOnce);
+            try {
+                assertThat(firstCallStarted.await(5, TimeUnit.SECONDS)).isTrue();
+                assertError(() -> sessions.issueForKakaoCallbackSubject("123456"), ErrorCode.ACCOUNT_WITHDRAWING);
+                Instant retryAt = jdbc.queryForObject("SELECT retry_at FROM app.account_withdrawals",
+                        java.sql.Timestamp.class).toInstant();
+                worker.runOnce();
+                assertThat(accounts.findById(login.accountId())).isPresent();
+                assertError(() -> sessions.issueForKakaoSubject("123456"), ErrorCode.ACCOUNT_WITHDRAWING);
+                assertError(() -> sessions.issueForKakaoCallbackSubject("123456"), ErrorCode.ACCOUNT_WITHDRAWING);
+                worker.runOnce();
+                assertThat(jdbc.queryForObject("SELECT retry_at FROM app.account_withdrawals",
+                        java.sql.Timestamp.class).toInstant()).isEqualTo(retryAt);
+                assertThat(providerCalls.get()).isEqualTo(1);
+            } finally {
+                releaseFirstCall.countDown();
+                inFlight.get(5, TimeUnit.SECONDS);
+            }
+        }
+        assertThat(accounts.findById(login.accountId())).isPresent();
+        Instant retryAt = jdbc.queryForObject("SELECT retry_at FROM app.account_withdrawals",
+                java.sql.Timestamp.class).toInstant();
+        new WithdrawalWorker(jobs, unlink, cleanup, Clock.fixed(retryAt, clock.getZone()),
+                new WithdrawalProperties("", "5s", "15s", "5m", "5s")).runOnce();
+        assertThat(accounts.findById(login.accountId())).isEmpty();
+        assertThat(sessions.issueForKakaoSubject("123456").accountId()).isNotEqualTo(login.accountId());
     }
 
     @Test

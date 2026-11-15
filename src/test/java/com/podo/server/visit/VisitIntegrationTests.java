@@ -887,6 +887,146 @@ class VisitIntegrationTests {
         ).isEqualTo(4);
     }
 
+    @Test
+    void completionOrderFindsTheLatestFinishedVisitAndKeepsLegacyCursors()
+            throws Exception {
+        Instant time = Instant.parse("2026-11-07T01:00:00.123456Z");
+        UUID latestFinished = completedFixture(owner, place, time, time.plusSeconds(60));
+        UUID latestCreated = completedFixture(owner, place, time.plusSeconds(10), time.plusSeconds(30));
+        completedFixture(owner, place("PUBLISHED"), time, time.plusSeconds(90));
+        completedFixture(actor(), place, time, time.plusSeconds(120));
+
+        JsonNode completed = ok(get(PATH)
+                .param("status", "COMPLETED")
+                .param("placeId", place.toString())
+                .param("sort", "COMPLETED_AT_DESC")
+                .param("limit", "1"), owner, 200);
+        assertThat(completed.at("/items/0/id").asText()).isEqualTo(latestFinished.toString());
+        assertThat(completed.at("/items/0/completedAt").asText())
+                .isEqualTo(time.plusSeconds(60).toString());
+
+        JsonNode original = ok(get(PATH)
+                .param("status", "COMPLETED")
+                .param("placeId", place.toString())
+                .param("limit", "1"), owner, 200);
+        assertThat(original.at("/items/0/id").asText()).isEqualTo(latestCreated.toString());
+
+        // This is the exact cursor payload emitted before sort was introduced.
+        String legacyHash = com.podo.server.visit.input.VisitInput.hash("[COMPLETED]\n" + place);
+        String legacyCursor = Base64.getUrlEncoder().withoutPadding().encodeToString(
+                ("visits\n1\n" + owner.id() + "\n" + legacyHash + "\n"
+                        + time.plusSeconds(10) + "\n" + latestCreated)
+                        .getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        for (String sort : List.of("", "CREATED_AT_DESC")) {
+            var request = get(PATH).param("status", "COMPLETED")
+                    .param("placeId", place.toString()).param("cursor", legacyCursor);
+            if (!sort.isEmpty()) request.param("sort", sort);
+            assertThat(ok(request, owner, 200).at("/items/0/id").asText())
+                    .isEqualTo(latestFinished.toString());
+        }
+
+        JsonNode detail = ok(get(PATH + "/" + latestFinished), owner, 200);
+        assertThat(detail.get("completedAt")).isEqualTo(completed.at("/items/0/completedAt"));
+    }
+
+    @Test
+    void completionOrderPaginatesEqualCompletionTimesWithoutMissingRevisits()
+            throws Exception {
+        Instant time = Instant.parse("2026-11-07T01:00:00.123456Z");
+        for (int i = 0; i < 7; i++) {
+            completedFixture(owner, place, time.plusSeconds(i), time.plusSeconds(60 + i % 2));
+        }
+        var expected = jdbc.queryForList("""
+                SELECT id FROM app.visits
+                WHERE account_id = ? AND place_id = ? AND status = 'COMPLETED'
+                ORDER BY completed_at DESC, id DESC
+                """, UUID.class, owner.id(), place);
+        List<UUID> actual = new ArrayList<>();
+        String cursor = null;
+        do {
+            var request = get(PATH).param("status", "COMPLETED")
+                    .param("sort", "COMPLETED_AT_DESC")
+                    .param("placeId", place.toString()).param("limit", "2");
+            if (cursor != null) request.param("cursor", cursor);
+            JsonNode page = ok(request, owner, 200);
+            page.get("items").forEach(item -> actual.add(UUID.fromString(item.get("id").asText())));
+            cursor = page.get("nextCursor").isNull() ? null : page.get("nextCursor").asText();
+        } while (cursor != null);
+        assertThat(actual).containsExactlyElementsOf(expected).doesNotHaveDuplicates();
+    }
+
+    @Test
+    void completionCursorsCannotBeReusedAcrossSortAccountOrPlace()
+            throws Exception {
+        Instant time = Instant.parse("2026-11-07T01:00:00.123456Z");
+        completedFixture(owner, place, time, time.plusSeconds(60));
+        completedFixture(owner, place, time.plusSeconds(10), time.plusSeconds(90));
+        String completedCursor = ok(get(PATH).param("status", "COMPLETED")
+                .param("sort", "COMPLETED_AT_DESC").param("placeId", place.toString())
+                .param("limit", "1"), owner, 200).get("nextCursor").asText();
+        error(send(get(PATH).param("status", "COMPLETED")
+                .param("placeId", place.toString()).param("cursor", completedCursor), owner),
+                400, "INVALID_CURSOR");
+        error(send(get(PATH).param("status", "COMPLETED")
+                .param("sort", "COMPLETED_AT_DESC").param("placeId", place.toString())
+                .param("cursor", completedCursor), actor()), 400, "INVALID_CURSOR");
+        error(send(get(PATH).param("status", "COMPLETED")
+                .param("sort", "COMPLETED_AT_DESC")
+                .param("placeId", UUID.randomUUID().toString()).param("cursor", completedCursor), owner),
+                400, "INVALID_CURSOR");
+        String originalCursor = ok(get(PATH).param("status", "COMPLETED")
+                .param("placeId", place.toString()).param("limit", "1"), owner, 200)
+                .get("nextCursor").asText();
+        error(send(get(PATH).param("status", "COMPLETED")
+                .param("sort", "COMPLETED_AT_DESC").param("placeId", place.toString())
+                .param("cursor", originalCursor), owner), 400, "INVALID_CURSOR");
+    }
+
+    @Test
+    void completionSortRejectsAmbiguousFiltersAndIsDocumented()
+            throws Exception {
+        for (var request : List.of(
+                get(PATH).param("sort", "COMPLETED_AT_DESC"),
+                get(PATH).param("status", "PLANNED").param("sort", "COMPLETED_AT_DESC"),
+                get(PATH).param("status", "COMPLETED,CANCELLED").param("sort", "COMPLETED_AT_DESC"),
+                get(PATH).param("status", "COMPLETED").param("sort", ""),
+                get(PATH).param("status", "COMPLETED").param("sort", "completedAt"),
+                get(PATH).param("status", "COMPLETED").param("sort", "CREATED_AT_DESC", "COMPLETED_AT_DESC")
+        )) {
+            error(send(request, owner), 400, "INVALID_REQUEST");
+        }
+        JsonNode empty = ok(get(PATH).param("status", "COMPLETED")
+                .param("sort", "COMPLETED_AT_DESC"), owner, 200);
+        assertThat(empty.get("items").isEmpty()).isTrue();
+        assertThat(empty.get("nextCursor").isNull()).isTrue();
+
+        JsonNode schema = mapper.readTree(mvc.perform(get("/v3/api-docs"))
+                .andReturn().getResponse().getContentAsByteArray());
+        JsonNode sort = java.util.stream.StreamSupport.stream(
+                schema.at("/paths/~1api~1visits/get/parameters").spliterator(), false)
+                .filter(parameter -> "sort".equals(parameter.path("name").asText()))
+                .findFirst().orElseThrow();
+        assertThat(sort.at("/schema/default").asText()).isEqualTo("CREATED_AT_DESC");
+        assertThat(sort.at("/schema/enum").toString()).contains("COMPLETED_AT_DESC");
+    }
+
+    private UUID completedFixture(Actor actor, UUID placeId, Instant created, Instant completed) {
+        var sets = jdbc.queryForList(
+                "SELECT id FROM app.quiz_sets WHERE place_id = ? AND observation_id IS NULL",
+                UUID.class, placeId);
+        UUID set = sets.isEmpty() ? quiz(placeId, null, 1, "PUBLISHED") : sets.getFirst();
+        UUID id = UUID.randomUUID();
+        jdbc.update("""
+                INSERT INTO app.visits (
+                    id, account_id, place_id, planned_date, source, status,
+                    quiz_set_id, create_request_key, create_request_hash,
+                    reported_at, completed_at, created_at, updated_at
+                ) VALUES (?, ?, ?, '2026-11-07', 'MAP', 'COMPLETED', ?, ?, 'fixture', ?, ?, ?, ?)
+                """, id, actor.id(), placeId, set, id.toString(), Timestamp.from(created),
+                Timestamp.from(completed), Timestamp.from(created), Timestamp.from(completed));
+        return id;
+    }
+
     private record Actor(UUID id, String token) {}
 
     private Actor actor() {

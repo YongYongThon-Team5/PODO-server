@@ -106,11 +106,16 @@ public class WithdrawalRepository {
                 .param("now", now.atOffset(ZoneOffset.UTC)).query(Long.class).optional();
     }
 
-    // Caller holds the account lock: re-consent must invalidate every in-flight cleanup lease.
+    // Fence local writes immediately, but let an in-flight unlink's bounded lease drain before retrying.
+    // Keep the hold on repeated callbacks so old HTTP cannot overlap a new unlink and completed signup.
     public void rearmUnlink(UUID accountId, Instant now) {
         int changed = jdbc.sql("""
-                UPDATE app.account_withdrawals SET stage = 'UNLINK_PENDING', lease_token = NULL,
-                    lease_expires_at = NULL, retry_at = :now, error_code = NULL
+                UPDATE app.account_withdrawals
+                SET retry_at = CASE WHEN stage = 'UNLINK_PENDING'
+                        THEN GREATEST(:now, retry_at, COALESCE(lease_expires_at, :now))
+                        ELSE :now END,
+                    stage = 'UNLINK_PENDING', lease_token = NULL,
+                    lease_expires_at = NULL, error_code = NULL
                 WHERE account_id = :account
                 """).param("account", accountId).param("now", now.atOffset(ZoneOffset.UTC)).update();
         if (changed != 1) throw new IllegalStateException("Withdrawal job is missing");

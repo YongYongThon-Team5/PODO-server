@@ -40,6 +40,10 @@ spring:
       fail-on-unknown-properties: true
 
 podo:
+  books:
+    api-key: ${YONGIN_LIBRARY_API_KEY:}
+    recommendations: []
+
   auth:
     api-origin: ${API_ORIGIN:https://localhost:8443}
     success-redirect-uri: ${AUTH_SUCCESS_REDIRECT_URI:${API_ORIGIN:https://localhost:8443}/auth/success}
