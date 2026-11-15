@@ -1,5 +1,6 @@
 package com.podo.server.profile.image.service;
 
+import com.podo.server.auth.repository.AccountRepository;
 import com.podo.server.global.exception.BusinessException;
 import com.podo.server.global.exception.ErrorCode;
 import com.podo.server.profile.image.domain.ProfileImage;
@@ -23,6 +24,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 @Slf4j
 public class ProfileImageService {
     private final ProfileImageRepository images;
+    private final AccountRepository accounts;
     private final ProfileImageProcessor processor;
     private final ProfileImageStorage storage;
     private final Clock clock;
@@ -30,6 +32,9 @@ public class ProfileImageService {
     @Transactional
     public ProfileImageCreated upload(UUID accountId, byte[] bytes, String declaredContentType) {
         var processed = processor.process(bytes, declaredContentType);
+        if (accounts.findLockedById(accountId).filter(account -> account.isActive()).isEmpty()) {
+            throw new BusinessException(ErrorCode.INVALID_TOKEN);
+        }
         UUID id = UUID.randomUUID();
         String storageKey = id.toString();
         long sizeBytes = processed.bytes().length;

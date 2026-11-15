@@ -35,12 +35,12 @@ class ProfileImageStorageTest {
     }
 
     @Test
-    void ignoresLegacyKeysOutsideTheStorageDirectory() throws IOException {
+    void rejectsLegacyDeletionKeysOutsideTheStorageDirectory() throws IOException {
         Path unrelated = Files.write(root.resolve("unrelated"), new byte[]{7});
         var storage = new ProfileImageStorage(root.resolve("images").toString());
 
         assertThat(storage.open("../unrelated")).isEmpty();
-        storage.delete("../unrelated");
+        assertThatThrownBy(() -> storage.delete("../unrelated")).isInstanceOf(BusinessException.class);
 
         assertThat(unrelated).exists();
     }

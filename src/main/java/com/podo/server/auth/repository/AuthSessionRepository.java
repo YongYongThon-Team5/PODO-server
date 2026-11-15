@@ -18,6 +18,14 @@ public interface AuthSessionRepository extends JpaRepository<AuthSession, UUID> 
     @Query("select session from AuthSession session where session.id = :id")
     Optional<AuthSession> findLockedById(@Param("id") UUID id);
 
+    // Scalar lookup must not populate the persistence context before the account lock.
+    @Query("select session.accountId from AuthSession session where session.id = :id")
+    Optional<UUID> findAccountIdById(@Param("id") UUID id);
+
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query("update AuthSession session set session.revokedAt = :now where session.accountId = :accountId and session.revokedAt is null")
+    int revokeForAccount(@Param("accountId") UUID accountId, @Param("now") Instant now);
+
     @Modifying
     @Query("delete from AuthSession session where session.expiresAt <= :cutoff or session.revokedAt <= :cutoff")
     int deleteRetiredBefore(@Param("cutoff") Instant cutoff);

@@ -58,8 +58,8 @@ public class ProfileImageStorage {
     }
 
     public void delete(String storageKey) {
-        if (!KEY.matcher(storageKey).matches()) {
-            return;
+        if (storageKey == null || !KEY.matcher(storageKey).matches()) {
+            throw new BusinessException(ErrorCode.SERVICE_UNAVAILABLE);
         }
         try {
             Files.deleteIfExists(directory.resolve(storageKey));

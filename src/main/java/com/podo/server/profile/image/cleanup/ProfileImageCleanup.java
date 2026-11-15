@@ -63,10 +63,10 @@ public class ProfileImageCleanup {
                 ), removed AS (
                     DELETE FROM app.profile_images image USING expired
                     WHERE image.id = expired.id
-                    RETURNING image.id, image.storage_key
+                    RETURNING image.id, image.storage_key, image.account_id
                 )
-                INSERT INTO app.profile_image_deletions (image_id, storage_key, retry_at)
-                SELECT id, storage_key, :now FROM removed
+                INSERT INTO app.profile_image_deletions (image_id, storage_key, retry_at, account_id)
+                SELECT id, storage_key, :now, account_id FROM removed
                 """)
                 .param("cutoff", now.minus(RETENTION))
                 .param("batchSize", BATCH_SIZE)

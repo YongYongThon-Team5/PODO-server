@@ -17,6 +17,10 @@ public interface AccountRepository extends JpaRepository<Account, UUID> {
     Optional<Account> findByKakaoSubject(String kakaoSubject);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select account from Account account where account.kakaoSubject = :subject")
+    Optional<Account> findLockedByKakaoSubject(@Param("subject") String subject);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select account from Account account where account.id = :id")
     Optional<Account> findLockedById(@Param("id") UUID id);
 

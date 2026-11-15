@@ -54,11 +54,11 @@ class PodoServerApplicationTests {
     void initializesTheDomainSchemaAndDoesNotReapplyTheMigration() {
         assertThat(
                 flyway.info().current().getVersion().getVersion()
-        ).isEqualTo("4");
+        ).isEqualTo("6");
 
         assertThat(flyway.info().applied())
                 .filteredOn(migration -> migration.getVersion() != null)
-                .hasSize(4);
+                .hasSize(6);
 
         assertThat(jdbc.queryForList("""
                 SELECT table_name
@@ -83,7 +83,9 @@ class PodoServerApplicationTests {
                 "quiz_answers",
                 "quiz_hint_views",
                 "observations",
-                "observation_images"
+                "observation_images",
+                "account_withdrawals",
+                "account_withdrawal_files"
         );
 
         assertThat(jdbc.queryForObject("""
@@ -91,7 +93,7 @@ class PodoServerApplicationTests {
                 FROM information_schema.table_constraints
                 WHERE constraint_schema = 'app'
                   AND constraint_type = 'FOREIGN KEY'
-                """, Integer.class)).isEqualTo(22);
+                """, Integer.class)).isEqualTo(24);
 
         Flyway restartedFlyway = Flyway.configure()
                 .dataSource(dataSource)
@@ -109,7 +111,7 @@ class PodoServerApplicationTests {
 
         assertThat(restartedFlyway.info().applied())
                 .filteredOn(migration -> migration.getVersion() != null)
-                .hasSize(4);
+                .hasSize(6);
 
         restartedFlyway.validate();
     }

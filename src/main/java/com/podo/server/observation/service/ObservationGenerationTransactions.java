@@ -33,7 +33,8 @@ public class ObservationGenerationTransactions {
             UUID placeId,
             String placeName,
             List<Image> images,
-            List<Source> sources
+            List<Source> sources,
+            int attemptCount
     ) {
     }
 
@@ -113,7 +114,8 @@ public class ObservationGenerationTransactions {
                 place.getId(),
                 place.getName(),
                 images,
-                sources
+                sources,
+                row.attemptCount()
         );
     }
 

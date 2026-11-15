@@ -20,6 +20,14 @@ public interface AuthTokenRepository extends JpaRepository<AuthToken, String> {
     @Query("update AuthToken token set token.revokedAt = :now where token.sessionId = :sessionId")
     int revokeForSession(@Param("sessionId") UUID sessionId, @Param("now") Instant now);
 
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query("""
+            update AuthToken token set token.revokedAt = :now
+            where token.sessionId in (select session.id from AuthSession session where session.accountId = :accountId)
+              and token.revokedAt is null
+            """)
+    int revokeForAccount(@Param("accountId") UUID accountId, @Param("now") Instant now);
+
     @Modifying
     @Query("""
             delete from AuthToken token where token.sessionId in
