@@ -1,6 +1,8 @@
 package com.podo.server.auth.domain;
 
 import com.podo.server.global.entity.BaseTimeEntity;
+import com.podo.server.global.exception.BusinessException;
+import com.podo.server.global.exception.ErrorCode;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
@@ -30,6 +32,17 @@ public class Account extends BaseTimeEntity {
         this.id = id;
         this.kakaoSubject = kakaoSubject;
         this.status = status;
+    }
+
+    public void beginWithdrawal() {
+        if (!isActive() && !"WITHDRAWING".equals(status)) {
+            throw new BusinessException(ErrorCode.INVALID_TOKEN);
+        }
+        status = "WITHDRAWING";
+    }
+
+    public boolean isWithdrawing() {
+        return "WITHDRAWING".equals(status);
     }
 
     public boolean isActive() {

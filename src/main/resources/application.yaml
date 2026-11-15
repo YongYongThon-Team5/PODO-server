@@ -49,6 +49,12 @@ podo:
     success-redirect-uri: ${AUTH_SUCCESS_REDIRECT_URI:${API_ORIGIN:https://localhost:8443}/auth/success}
     failure-redirect-uri: ${AUTH_FAILURE_REDIRECT_URI:${API_ORIGIN:https://localhost:8443}/auth/error}
     csrf-signing-key: ${AUTH_CSRF_SIGNING_KEY:}
+    withdrawal:
+      admin-key: ${KAKAO_ADMIN_KEY:}
+      connect-timeout: 5s
+      request-timeout: 15s
+      lease-duration: 5m
+      poll-interval: 5s
     kakao:
       client-id: ${KAKAO_CLIENT_ID:}
       client-secret: ${KAKAO_CLIENT_SECRET:}

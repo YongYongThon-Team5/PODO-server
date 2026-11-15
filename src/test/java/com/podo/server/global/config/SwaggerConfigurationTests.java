@@ -1,10 +1,17 @@
 package com.podo.server.global.config;
 
+import com.podo.server.auth.config.AuthProperties;
+import com.podo.server.auth.csrf.CsrfService;
+import com.podo.server.auth.kakao.KakaoClient;
 import com.podo.server.auth.security.SecurityErrorWriter;
 import com.podo.server.auth.service.AuthSessionService;
+import com.podo.server.auth.service.OAuthLoginStateService;
+import com.podo.server.auth.web.AuthController;
+import com.podo.server.auth.withdrawal.WithdrawalService;
 import com.podo.server.books.PlaceBookController;
 import com.podo.server.books.PlaceBookService;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
+import java.time.Clock;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
@@ -12,8 +19,8 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
-import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -56,6 +63,33 @@ class SwaggerConfigurationTests {
                 .andExpect(jsonPath("$.paths['/api/profile-options'].get").exists())
                 .andExpect(jsonPath("$.paths['/api/profile-options'].get.security").doesNotExist())
                 .andExpect(jsonPath("$.paths['/internal/docs-test']").doesNotExist());
+    }
+
+    @MockitoBean
+    private AuthProperties authProperties;
+    @MockitoBean
+    private OAuthLoginStateService states;
+    @MockitoBean
+    private KakaoClient kakao;
+    @MockitoBean
+    private CsrfService csrf;
+    @MockitoBean
+    private Clock clock;
+    @MockitoBean
+    private WithdrawalService withdrawals;
+
+    @Test
+    void withdrawalDocumentsAcceptanceSecurityAndUnavailableConfiguration() throws Exception {
+        mockMvc.perform(get("/v3/api-docs/podo"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.paths['/api/me'].delete.security[0].BearerAuth").isArray())
+                .andExpect(jsonPath("$.paths['/api/me'].delete.responses['202'].description").value("탈퇴 접수 (처리 중)"))
+                .andExpect(jsonPath("$.paths['/api/me'].delete.responses['401']").exists())
+                .andExpect(jsonPath("$.paths['/api/me'].delete.responses['403']").exists())
+                .andExpect(jsonPath("$.paths['/api/me'].delete.responses['503']").exists())
+                .andExpect(jsonPath("$.paths['/api/me'].delete.responses['202'].content['application/json'].schema['$ref']")
+                        .value("#/components/schemas/WithdrawalResponse"))
+                .andExpect(jsonPath("$.components.schemas.WithdrawalResponse.properties.status.enum[0]").value("PROCESSING"));
     }
 
     @Test
@@ -117,7 +151,8 @@ class SwaggerConfigurationTests {
             "org.springframework.boot.hibernate.autoconfigure.HibernateJpaAutoConfiguration",
             "org.springframework.boot.data.jpa.autoconfigure.DataJpaRepositoriesAutoConfiguration"
     })
-    @Import({OpenApiConfig.class, SecurityConfig.class, SecurityErrorWriter.class, SampleController.class, PlaceBookController.class})
+    @Import({OpenApiConfig.class, SecurityConfig.class, SecurityErrorWriter.class,
+            AuthController.class, SampleController.class, PlaceBookController.class})
     static class TestConfiguration {
     }
 

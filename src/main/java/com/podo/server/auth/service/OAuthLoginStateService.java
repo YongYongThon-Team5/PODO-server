@@ -2,6 +2,7 @@ package com.podo.server.auth.service;
 
 import com.podo.server.auth.domain.OAuthLoginRequest;
 import com.podo.server.auth.repository.OAuthLoginRequestRepository;
+import com.podo.server.auth.repository.AccountRepository;
 import com.podo.server.auth.support.OpaqueTokens;
 import com.podo.server.global.exception.BusinessException;
 import com.podo.server.global.exception.ErrorCode;
@@ -22,6 +23,7 @@ import java.util.UUID;
 public class OAuthLoginStateService {
 
     private final OAuthLoginRequestRepository requests;
+    private final AccountRepository accounts;
     private final Clock clock;
 
     @Transactional
@@ -53,6 +55,9 @@ public class OAuthLoginStateService {
     @Transactional
     public void linkAccount(String state, UUID accountId) {
         if (!OpaqueTokens.isToken(state) || accountId == null) {
+            throw new BusinessException(ErrorCode.INVALID_REQUEST);
+        }
+        if (accounts.findLockedById(accountId).filter(account -> account.isActive()).isEmpty()) {
             throw new BusinessException(ErrorCode.INVALID_REQUEST);
         }
         OAuthLoginRequest request = lockedRequest(state);

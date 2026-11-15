@@ -7,18 +7,18 @@ import com.podo.server.auth.repository.AccountRepository;
 import com.podo.server.auth.repository.AuthSessionRepository;
 import com.podo.server.auth.repository.AuthTokenRepository;
 import com.podo.server.auth.support.OpaqueTokens;
+import com.podo.server.auth.withdrawal.WithdrawalRepository;
 import com.podo.server.global.exception.BusinessException;
 import com.podo.server.global.exception.ErrorCode;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentCaptor;
-
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.Optional;
 import java.util.UUID;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -38,11 +38,13 @@ class AuthSessionServiceTest {
     private final String rawRefresh = OpaqueTokens.newToken();
     private final String refreshHash = OpaqueTokens.hash(rawRefresh);
     private final AuthSessionService service = new AuthSessionService(
-            accounts, sessions, tokens, Clock.fixed(NOW, ZoneOffset.UTC));
+            accounts, sessions, tokens, Clock.fixed(NOW, ZoneOffset.UTC), mock(WithdrawalRepository.class));
 
     @BeforeEach
     void activeAccount() {
         when(accounts.findById(accountId)).thenReturn(Optional.of(new Account(accountId, "kakao-subject", "ACTIVE")));
+        when(accounts.findLockedById(accountId)).thenReturn(Optional.of(new Account(accountId, "kakao-subject", "ACTIVE")));
+        when(sessions.findAccountIdById(sessionId)).thenReturn(Optional.of(accountId));
     }
 
     @Test
@@ -136,7 +138,7 @@ class AuthSessionServiceTest {
 
     @Test
     void repeatedKakaoLoginCreatesSeparate14DaySessionsWithRefreshOnly() {
-        when(accounts.findByKakaoSubject("kakao-subject"))
+        when(accounts.findLockedByKakaoSubject("kakao-subject"))
                 .thenReturn(Optional.of(new Account(accountId, "kakao-subject", "ACTIVE")));
         AuthSessionService.LoginSession first = service.issueForKakaoSubject("kakao-subject");
         AuthSessionService.LoginSession second = service.issueForKakaoSubject("kakao-subject");

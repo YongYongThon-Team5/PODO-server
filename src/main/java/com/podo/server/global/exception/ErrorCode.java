@@ -28,6 +28,7 @@ public enum ErrorCode {
     QUIZ_CONTENT_CHANGED(HttpStatus.CONFLICT, "퀴즈를 정정하고 있습니다."),
     PLACE_UNAVAILABLE(HttpStatus.CONFLICT, "현재 이용할 수 없는 장소입니다."),
     COLOR_ALREADY_USED(HttpStatus.CONFLICT, "다른 아이가 사용 중인 색상입니다."),
+    ACCOUNT_WITHDRAWING(HttpStatus.CONFLICT, "탈퇴 처리 중인 계정입니다."),
     AUTH_CONTEXT_MISMATCH(HttpStatus.CONFLICT, "로그인 정보를 다시 확인해 주세요."),
 
     UPLOAD_TOO_LARGE(HttpStatus.CONTENT_TOO_LARGE, "사진의 허용 크기를 초과했습니다."),
