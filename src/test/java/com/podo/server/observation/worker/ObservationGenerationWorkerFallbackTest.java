@@ -31,7 +31,7 @@ class ObservationGenerationWorkerFallbackTest {
             var snapshot = new Snapshot(lease.observationId(), UUID.randomUUID(), UUID.randomUUID(),
                     UUID.randomUUID(), "용인 공원",
                     List.of(new Image(UUID.randomUUID(), 1, "image-key", "image/jpeg", 1)),
-                    List.of(new Source(UUID.randomUUID(), "공원에서는 다양한 나무와 꽃을 관찰할 수 있어요.")));
+                    List.of(new Source(UUID.randomUUID(), "공원에서는 다양한 나무와 꽃을 관찰할 수 있어요.")), 1);
             when(props.enabled()).thenReturn(true);
             when(transactions.claim()).thenReturn(Optional.of(lease));
             when(transactions.snapshot(lease)).thenReturn(snapshot);
