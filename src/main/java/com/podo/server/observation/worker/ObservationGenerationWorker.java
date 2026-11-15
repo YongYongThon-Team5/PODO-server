@@ -9,6 +9,8 @@ import com.podo.server.observation.service.ObservationGenerationTransactions;
 import com.podo.server.observation.storage.ObservationStorage;
 import java.time.Clock;
 import java.time.Duration;
+import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -50,9 +52,22 @@ public class ObservationGenerationWorker {
         }
 
         var lease = next.get();
+        long started = System.nanoTime();
+        String stage = "snapshot";
+        UUID visitId = null;
+        Integer attempt = null;
+        FailureCode failureCode = null;
+        boolean completed = false;
+        String exceptionType = "none";
+        log.info("Observation worker event=started stage={} observationId={}", stage, lease.observationId());
 
         try {
             var snapshot = transactions.snapshot(lease);
+            visitId = snapshot.visitId();
+            attempt = snapshot.attemptCount();
+            stage = "storage";
+            log.info("Observation worker event=started stage={} observationId={} visitId={} attempt={} photoCount={}",
+                    stage, lease.observationId(), visitId, attempt, snapshot.images().size());
 
             var photos = snapshot.images().stream()
                     .map(image -> new Photo(
@@ -68,34 +83,42 @@ public class ObservationGenerationWorker {
                     snapshot.sources()
             );
 
+            stage = "ai";
             Output output = ai.generate(input);
 
+            stage = "validation";
             validator.validate(input, output);
 
+            stage = "complete";
             transactions.complete(
                     lease,
                     snapshot,
                     input,
                     output
             );
+            completed = true;
         } catch (GenerationException ex) {
-            transactions.failed(lease, ex.code());
+            failureCode = ex.code();
+            exceptionType = ex.getClass().getName();
+            transactions.failed(lease, failureCode);
         } catch (BusinessException ex) {
-            transactions.failed(
-                    lease,
-                    FailureCode.STORAGE_FAILURE
-            );
+            failureCode = FailureCode.STORAGE_FAILURE;
+            exceptionType = ex.getClass().getName();
+            transactions.failed(lease, failureCode);
         } catch (RuntimeException ex) {
-            log.error(
-                    "Observation generation failed: observationId={}, exceptionType={}",
-                    lease.observationId(),
-                    ex.getClass().getName()
-            );
-
-            transactions.failed(
-                    lease,
-                    FailureCode.INTERNAL_FAILURE
-            );
+            failureCode = FailureCode.INTERNAL_FAILURE;
+            exceptionType = ex.getClass().getName();
+            transactions.failed(lease, failureCode);
+        } finally {
+            long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
+            if (completed) {
+                log.info("Observation worker event=completed stage={} observationId={} visitId={} attempt={} elapsedMs={}",
+                        stage, lease.observationId(), visitId, attempt, elapsedMs);
+            } else if (failureCode != null) {
+                log.warn("Observation worker event=failed stage={} observationId={} visitId={} attempt={} "
+                                + "elapsedMs={} failureCode={} exceptionType={}",
+                        stage, lease.observationId(), visitId, attempt, elapsedMs, failureCode, exceptionType);
+            }
         }
     }
 
