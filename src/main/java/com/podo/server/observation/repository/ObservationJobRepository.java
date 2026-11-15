@@ -442,14 +442,16 @@ public class ObservationJobRepository {
                                 '/api/visits/' || o.visit_id::text
                                     || '/observations/' || o.id::text
                                     || '/images/' || CAST(:image AS text),
-                                o.ai_model,
-                                o.prompt_version,
+                                CASE WHEN :basic THEN 'rule-based-source-reading' ELSE o.ai_model END,
+                                CASE WHEN :basic THEN 'source-reading-v1' ELSE o.prompt_version END,
                                 :now
                             FROM app.observations o
                             WHERE o.id = :observation
                             """)
                     .param("id", UUID.randomUUID())
                     .param("set", setId)
+                    .param("basic", com.podo.server.observation.ai.PlaceFactFallbackQuiz.INTRODUCTION
+                            .equals(output.introduction()))
                     .param("position", ++position)
                     .param("text", question.text())
                     .param("answer", question.answer())

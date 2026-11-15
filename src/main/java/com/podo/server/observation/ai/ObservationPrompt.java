@@ -11,7 +11,7 @@ import tools.jackson.databind.ObjectMapper;
 public class ObservationPrompt {
 
     public static final String VERSION =
-            "podo-photo-source-v2-child";
+            "podo-photo-source-v3-always";
 
     public String text(
             ObservationAi.Input input,
@@ -39,20 +39,22 @@ public class ObservationPrompt {
                 힌트에 '정답은 O/X'라고 직접 알려주지 않는다.
 
                 [근거와 출력]
-                사진에 보이는 대상과 제공된 출처 사실의 관련성이 명확해야 한다.
+                사진에서 확인되는 단서를 우선 활용해 제공된 장소 자료의 사실을 묻는다.
+                사진만으로 세 문제를 만들기 어려우면 장소 자료를 읽는 문제로 전환한다.
+                이때 사진에서 확인한 사실처럼 표현하지 말고 자료에 나온 내용임을 밝힌다.
                 역사·교육 사실은 제공된 sources의 factText만 사용한다.
                 사진의 색·형태만 묻고 무관한 sourceId를 붙이지 않는다.
                 흐릿한 글자, 정확한 종, 연도, 장소를 추측하지 않는다.
-                result는 READY 또는 INSUFFICIENT_EVIDENCE다.
-                근거가 부족하면 INSUFFICIENT_EVIDENCE, introduction은 빈 문자열,
-                questions는 빈 배열로 반환한다. 억지로 세 문제를 채우지 않는다.
-                READY이면 서로 다른 OX 문제 정확히 세 개를 만든다.
+                result는 항상 READY다. 서로 다른 쉬운 OX 문제 정확히 세 개를 만든다.
+                사진의 단서가 부족해도 제공된 sources의 사실을 바탕으로 세 문항을 완성한다.
+                introduction에서 사진 관찰 문제인지 장소 자료 문제인지 자연스럽게 안내한다.
                 introduction은 짧은 관찰 안내이며 정답·문제별 해설을 공개하지 않는다.
                 answer는 O 또는 X다. explanation은 출처에 맞는 해설이다.
                 sourceId는 제공된 ID다. sourceQuote는 해당 factText에서 연속된 원문을
                 8자 이상 그대로 인용한다. 이 인용문은 쉽게 고쳐 쓰지 않는다.
                 imagePosition은 근거 사진 번호다.
-                photoEvidenceText는 그 사진에서 보이는 단서를 쉬운 한 문장으로 적는다.
+                photoEvidenceText는 사진에서 확인한 단서만 적는다.
+                사진 대신 자료로 만든 문제는 '사진 대신 장소 설명 자료를 참고했어요.'라고 적는다.
                 사진만으로 역사 사실이 증명된다고 쓰지 않는다.
                 observationGuide는 어린이가 어디를 살펴볼지 알려주는 짧은 안내다.
 
@@ -154,15 +156,13 @@ public class ObservationPrompt {
                         "properties", Map.of(
                                 "result", Map.of(
                                         "type", "string",
-                                        "enum", List.of(
-                                                "READY",
-                                                "INSUFFICIENT_EVIDENCE"
-                                        )
+                                        "enum", List.of("READY")
                                 ),
                                 "introduction",
                                 text(ObservationTextLimits.INTRODUCTION),
                                 "questions", Map.of(
                                         "type", "array",
+                                        "minItems", 3,
                                         "maxItems", 3,
                                         "items", Map.of(
                                                 "type", "object",

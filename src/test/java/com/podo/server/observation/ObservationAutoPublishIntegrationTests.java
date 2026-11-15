@@ -158,4 +158,24 @@ class ObservationAutoPublishIntegrationTests extends ObservationIntegrationTestS
     private String visitPath(String suffix) {
         return "/api/visits/" + visitId + suffix;
     }
+    @Test
+    void basicSourceQuizIsPublishedAndLabeledWithoutClaimingGeminiGeneratedIt() throws Exception {
+        State state = upload(UUID.randomUUID().toString(), 1);
+        Lease lease = transactions.claim().orElseThrow();
+        var snapshot = transactions.snapshot(lease);
+        Input input = input(snapshot);
+        var basic = new com.podo.server.observation.ai.PlaceFactFallbackQuiz().generate(input);
+        transactions.complete(lease, snapshot, input, basic);
+        assertThat(service.get(accountId, visitId, state.id()).startAvailable()).isTrue();
+        var models = jdbc.queryForList("SELECT ai_model FROM app.quiz_questions q JOIN app.quiz_sets s ON s.id = q.quiz_set_id WHERE s.observation_id = ?", String.class, state.id());
+        assertThat(models).hasSize(3).containsOnly("rule-based-source-reading");
+        mvc.perform(post(visitPath("/report")).header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk());
+        var response = mvc.perform(get(visitPath("/quiz")).header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk()).andReturn().getResponse();
+        var quiz = mapper.readTree(response.getContentAsByteArray());
+        assertThat(quiz.get("introduction").asText()).contains("기본 퀴즈");
+        assertThat(quiz.get("questions").size()).isEqualTo(3);
+    }
+
 }

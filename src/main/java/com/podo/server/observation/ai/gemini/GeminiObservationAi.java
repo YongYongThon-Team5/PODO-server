@@ -42,6 +42,7 @@ public class GeminiObservationAi implements ObservationAi {
         this.prompt = prompt;
 
         this.client = HttpClient.newBuilder()
+                .version(HttpClient.Version.HTTP_1_1)
                 .connectTimeout(properties.connectTimeout())
                 .followRedirects(HttpClient.Redirect.NEVER)
                 .build();

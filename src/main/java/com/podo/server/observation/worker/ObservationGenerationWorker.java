@@ -30,6 +30,7 @@ public class ObservationGenerationWorker {
     private final ObservationProperties properties;
     private final ObservationGenerationTransactions transactions;
     private final ObservationAi ai;
+    private final com.podo.server.observation.ai.PlaceFactFallbackQuiz fallback;
     private final ObservationQuizValidator validator;
     private final ObservationStorage storage;
     private final ObservationJobRepository jobs;
@@ -68,9 +69,35 @@ public class ObservationGenerationWorker {
                     snapshot.sources()
             );
 
-            Output output = ai.generate(input);
-
-            validator.validate(input, output);
+            Output output;
+            long started = System.nanoTime();
+            try {
+                output = ai.generate(input);
+                validator.validate(input, output);
+            } catch (GenerationException ex) {
+                if (ex.code() == FailureCode.WORKER_INTERRUPTED
+                        || Thread.currentThread().isInterrupted()) {
+                    throw ex;
+                }
+                log.warn("Observation AI fallback: observationId={}, failureCode={}, elapsedMs={}",
+                        lease.observationId(), ex.code(),
+                        (System.nanoTime() - started) / 1_000_000);
+                output = fallback.generate(input);
+                validator.validate(input, output);
+            } catch (RuntimeException ex) {
+                if (Thread.currentThread().isInterrupted()) {
+                    throw ex;
+                }
+                log.warn("Observation AI fallback: observationId={}, exceptionType={}, elapsedMs={}",
+                        lease.observationId(), ex.getClass().getSimpleName(),
+                        (System.nanoTime() - started) / 1_000_000);
+                output = fallback.generate(input);
+                validator.validate(input, output);
+            }
+            log.info("Observation quiz prepared: observationId={}, basicQuiz={}, elapsedMs={}",
+                    lease.observationId(),
+                    com.podo.server.observation.ai.PlaceFactFallbackQuiz.INTRODUCTION.equals(output.introduction()),
+                    (System.nanoTime() - started) / 1_000_000);
 
             transactions.complete(
                     lease,

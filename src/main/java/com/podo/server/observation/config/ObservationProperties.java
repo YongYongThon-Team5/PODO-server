@@ -17,7 +17,7 @@ public record ObservationProperties(
         @DefaultValue("false")
         boolean enabled,
 
-        @DefaultValue("false")
+        @DefaultValue("true")
         boolean autoPublish,
 
         @NotNull
@@ -36,7 +36,7 @@ public record ObservationProperties(
         Duration connectTimeout,
 
         @NotNull
-        @DefaultValue("90s")
+        @DefaultValue("180s")
         Duration requestTimeout,
 
         @NotNull

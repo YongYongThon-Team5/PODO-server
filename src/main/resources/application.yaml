@@ -62,13 +62,13 @@ podo:
 
   observation:
     enabled: ${PODO_OBSERVATION_ENABLED:false}
-    auto-publish: ${PODO_OBSERVATION_AUTO_PUBLISH:false}
+    auto-publish: ${PODO_OBSERVATION_AUTO_PUBLISH:true}
     worker-enabled: ${PODO_OBSERVATION_WORKER_ENABLED:true}
     storage-directory: ${PODO_OBSERVATION_DIRECTORY:./var/observations}
     api-key: ${GEMINI_API_KEY:}
     model: ${GEMINI_MODEL:gemini-3.8-flash}
     connect-timeout: 5s
-    request-timeout: 90s
+    request-timeout: 180s
     lease-duration: 5m
     poll-interval: 5s
     max-attempts: 3
